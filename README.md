@@ -1,0 +1,26 @@
+# DWD Regenradar Mobile App (Kotlin)
+
+Diese mobile Android-App basiert auf dem KDE Plasma DWD-Regenradar-Widget und wurde vollständig in **Kotlin & Jetpack Compose** mit **Osmdroid** für interaktive OpenStreetMap-Karten implementiert.
+
+## Features
+
+- **Interaktive Karte** — Nahtlose OpenStreetMap-Integration mit stufenlosem Zoom und Pan.
+- **Echtzeit DWD Radar-Overlay** — Animiertes, transparentes Regenradar direkt vom DWD-WMS.
+- **Flüssige Vorladetechnologie** — Sämtliche Radarframes werden im Hintergrund geladen und im Cache gehalten, um eine vollkommen flüssige Animation ohne Flackern zu gewährleisten.
+- **Verlauf & Vorhersage** — Umschaltbar zwischen vergangenen Regenradaraufzeichnungen und der 2-stündigen DWD-Niederschlagsprognose.
+- **Standortbestimmung** — Springe direkt zu deinem eigenen Standort (erfordert GPS-Freigabe).
+- **Modernes Design** — Premium Dark-Mode Oberfläche mit minimalistischer Farbpalette und integrierter Intensitätslegende.
+
+## Struktur & Architektur
+
+Die App folgt modernen Android-Architekturrichtlinien (MVVM):
+- **`data/DwdWmsClient.kt`** — Berechnet dynamisch die 5-Minuten-Zeitfenster und projiziert Kachel-Koordinaten (x, y, zoom) via EPSG:3857 in das Bounding-Box-Format des WMS-Dienstes.
+- **`ui/RadarViewModel.kt`** — Hält den Zustand (Animation, Zeitschritte, Play/Pause) mithilfe sicherer Kotlin Coroutines im `viewModelScope`.
+- **`ui/components/RadarMapView.kt`** — Bindet die Karte über ein Compose-`AndroidView` ein und verwaltet die Layer-Schichten hocheffizient (nicht aktive Schichten werden im Hintergrund vorgeladen).
+- **`ui/RadarScreen.kt`** — Deklaratives Jetpack Compose-Layout mit Material 3 Komponenten.
+
+## Ausführen und Testen
+
+1. Öffne den Ordner `/home/will/ownProjects/kotlin-rain-radar` in **Android Studio**.
+2. Lass Gradle das Projekt synchronisieren.
+3. Starte die App auf einem Android-Emulator oder physischen Device (erfordert Android API 26+).
