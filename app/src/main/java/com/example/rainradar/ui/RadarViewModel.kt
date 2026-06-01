@@ -27,6 +27,9 @@ class RadarViewModel : ViewModel() {
     private val _isPreloading = MutableStateFlow(false)
     val isPreloading: StateFlow<Boolean> = _isPreloading.asStateFlow()
 
+    private val _preloadProgress = MutableStateFlow(0f)
+    val preloadProgress: StateFlow<Float> = _preloadProgress.asStateFlow()
+
     private var playbackJob: Job? = null
     private var preloadJob: Job? = null
     private val maxFrames = 24
@@ -43,15 +46,35 @@ class RadarViewModel : ViewModel() {
     fun refreshData() {
         stopPlayback()
         preloadJob?.cancel()
-        
+
         val times = DwdWmsClient.generateFrameTimes(_showForecast.value, maxFrames)
         _frameTimes.value = times
         _activeFrameIndex.value = if (_showForecast.value) 0 else maxFrames - 1
-        
+
         _isPreloading.value = true
+        _preloadProgress.value = 0f
+
+        // Safety timeout: if preloading takes more than 30 seconds (e.g. no internet),
+        // force-finish to prevent blocking the user forever
         preloadJob = viewModelScope.launch {
-            delay(5000) // 5 seconds preloading window
+            delay(30000)
+            if (_isPreloading.value) {
+                _isPreloading.value = false
+                _preloadProgress.value = 1f
+            }
+        }
+    }
+
+    /**
+     * Called by the UI layer to report real tile-cache progress (0f..1f).
+     * When progress reaches 1.0, preloading is automatically finished.
+     */
+    fun updatePreloadProgress(progress: Float) {
+        _preloadProgress.value = progress
+        if (progress >= 1f) {
             _isPreloading.value = false
+            preloadJob?.cancel()
+            preloadJob = null
         }
     }
 
@@ -96,3 +119,4 @@ class RadarViewModel : ViewModel() {
         preloadJob = null
     }
 }
+

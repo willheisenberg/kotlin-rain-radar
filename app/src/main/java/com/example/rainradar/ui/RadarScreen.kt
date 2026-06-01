@@ -67,19 +67,49 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
     val isPlaying by viewModel.isPlaying.collectAsState()
     val isPreloading by viewModel.isPreloading.collectAsState()
 
-    var preloadProgress by remember { mutableStateOf(0f) }
-    LaunchedEffect(isPreloading) {
-        if (isPreloading) {
-            preloadProgress = 0f
+    val preloadProgress by viewModel.preloadProgress.collectAsState()
+
+    // Real tile-cache progress checker: polls the filesystem every 300ms to see
+    // which frames have actually downloaded their tiles into the osmdroid cache.
+    LaunchedEffect(isPreloading, frameTimes) {
+        if (isPreloading && frameTimes.isNotEmpty()) {
+            val cacheDir = java.io.File(context.cacheDir, "osmdroid/tiles")
+
+            // Reference tile coordinates: center of Germany (51.1657°N, 10.4515°E) at zoom 6
+            // This is the tile that osmdroid downloads first for the default viewport.
+            val refZoom = 6
+            val lat = Math.toRadians(51.1657)
+            val n = (1 shl refZoom).toDouble()
+            val refX = ((10.4515 + 180.0) / 360.0 * n).toInt()
+            val refY = ((1.0 - Math.log(Math.tan(lat) + 1.0 / Math.cos(lat)) / Math.PI) / 2.0 * n).toInt()
+
+            // Minimum display time so the spinner doesn't flash away instantly when tiles are cached
+            val minDisplayTime = 1500L
             val startTime = System.currentTimeMillis()
-            while (System.currentTimeMillis() - startTime < 5000) {
+
+            while (true) {
+                var loadedCount = 0
+                for (time in frameTimes) {
+                    val timeStr = com.example.rainradar.data.DwdWmsClient.formatIsoTime(time)
+                    // Osmdroid TileWriter saves tiles at: {cache}/DWD_Radar_{timeStr}/{zoom}/{x}/{y}.png.tile
+                    val tileFile = java.io.File(cacheDir, "DWD_Radar_$timeStr/$refZoom/$refX/$refY.png.tile")
+                    if (tileFile.exists()) {
+                        loadedCount++
+                    }
+                }
+
+                val progress = loadedCount.toFloat() / frameTimes.size.toFloat()
                 val elapsed = System.currentTimeMillis() - startTime
-                preloadProgress = (elapsed / 5000f).coerceIn(0f, 1f)
-                kotlinx.coroutines.delay(30)
+
+                if (loadedCount >= frameTimes.size && elapsed >= minDisplayTime) {
+                    viewModel.updatePreloadProgress(1f)
+                    break
+                } else {
+                    viewModel.updatePreloadProgress(progress.coerceAtMost(0.99f))
+                }
+
+                kotlinx.coroutines.delay(300)
             }
-            preloadProgress = 1f
-        } else {
-            preloadProgress = 1f
         }
     }
 
@@ -453,7 +483,7 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "${(preloadProgress * 100).toInt()}% geladen",
+                        text = "${(preloadProgress * 100).toInt()}% geladen (${(preloadProgress * frameTimes.size).toInt()} / ${frameTimes.size} Frames)",
                         color = TextSecondary,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(top = 4.dp)
