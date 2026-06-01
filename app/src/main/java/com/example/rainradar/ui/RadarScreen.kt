@@ -65,6 +65,23 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
     val frameTimes by viewModel.frameTimes.collectAsState()
     val activeFrameIndex by viewModel.activeFrameIndex.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
+    val isPreloading by viewModel.isPreloading.collectAsState()
+
+    var preloadProgress by remember { mutableStateOf(0f) }
+    LaunchedEffect(isPreloading) {
+        if (isPreloading) {
+            preloadProgress = 0f
+            val startTime = System.currentTimeMillis()
+            while (System.currentTimeMillis() - startTime < 5000) {
+                val elapsed = System.currentTimeMillis() - startTime
+                preloadProgress = (elapsed / 5000f).coerceIn(0f, 1f)
+                kotlinx.coroutines.delay(30)
+            }
+            preloadProgress = 1f
+        } else {
+            preloadProgress = 1f
+        }
+    }
 
     var userLocation by remember { mutableStateOf<GeoPoint?>(null) }
     var mapViewInstance by remember { mutableStateOf<MapView?>(null) }
@@ -123,6 +140,7 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                 frameTimes = frameTimes,
                 activeFrameIndex = activeFrameIndex,
                 userLocation = userLocation,
+                isPreloading = isPreloading,
                 modifier = Modifier.fillMaxSize(),
                 onMapReady = { mapView ->
                     mapViewInstance = mapView
@@ -341,6 +359,44 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                 }
             }
 
+            // ── Preloading Card Overlay (Glassmorphic) ──
+            AnimatedVisibility(
+                visible = isPreloading,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.align(Alignment.Center)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .background(SurfaceBg.copy(alpha = 0.95f), RoundedCornerShape(16.dp))
+                        .border(1.dp, BorderColor, RoundedCornerShape(16.dp))
+                        .padding(horizontal = 24.dp, vertical = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    CircularProgressIndicator(
+                        progress = preloadProgress,
+                        color = AccentBlue,
+                        trackColor = BorderColor,
+                        strokeWidth = 4.dp,
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Lade Radar-Daten...",
+                        color = TextPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "${(preloadProgress * 100).toInt()}% geladen",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+
             // ── Bottom Playback & Slider Controller ──
             Column(
                 modifier = Modifier
@@ -358,15 +414,17 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                     // Play/Pause button
                     Button(
                         onClick = { viewModel.togglePlayback() },
+                        enabled = !isPreloading,
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isPlaying) Color(0xFFEF4444) else AccentBlue
+                            containerColor = if (isPlaying) Color(0xFFEF4444) else AccentBlue,
+                            disabledContainerColor = SurfaceBg.copy(alpha = 0.5f)
                         ),
                         shape = RoundedCornerShape(8.dp),
                         contentPadding = PaddingValues(0.dp),
                         modifier = Modifier.size(38.dp)
                     ) {
                         Text(
-                            text = if (isPlaying) "⏸" else "▶",
+                            text = if (isPreloading) "⏳" else if (isPlaying) "⏸" else "▶",
                             color = Color.White,
                             fontSize = 16.sp
                         )
@@ -378,12 +436,15 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                     Slider(
                         value = activeFrameIndex.toFloat(),
                         onValueChange = { viewModel.setActiveFrameIndex(it.toInt()) },
+                        enabled = !isPreloading,
                         valueRange = 0f..maxOf(0f, (frameTimes.size - 1).toFloat()),
                         steps = maxOf(0, frameTimes.size - 2),
                         colors = SliderDefaults.colors(
                             activeTrackColor = AccentBlue,
                             inactiveTrackColor = BorderColor,
-                            thumbColor = AccentBlue
+                            thumbColor = AccentBlue,
+                            disabledActiveTrackColor = BorderColor,
+                            disabledThumbColor = BorderColor
                         ),
                         modifier = Modifier.weight(1f)
                     )

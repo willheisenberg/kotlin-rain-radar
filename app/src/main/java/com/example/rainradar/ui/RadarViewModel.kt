@@ -24,7 +24,11 @@ class RadarViewModel : ViewModel() {
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
+    private val _isPreloading = MutableStateFlow(false)
+    val isPreloading: StateFlow<Boolean> = _isPreloading.asStateFlow()
+
     private var playbackJob: Job? = null
+    private var preloadJob: Job? = null
     private val maxFrames = 24
 
     init {
@@ -38,9 +42,17 @@ class RadarViewModel : ViewModel() {
 
     fun refreshData() {
         stopPlayback()
+        preloadJob?.cancel()
+        
         val times = DwdWmsClient.generateFrameTimes(_showForecast.value, maxFrames)
         _frameTimes.value = times
         _activeFrameIndex.value = if (_showForecast.value) 0 else maxFrames - 1
+        
+        _isPreloading.value = true
+        preloadJob = viewModelScope.launch {
+            delay(5000) // 5 seconds preloading window
+            _isPreloading.value = false
+        }
     }
 
     fun setActiveFrameIndex(index: Int) {
@@ -80,5 +92,7 @@ class RadarViewModel : ViewModel() {
     override fun onCleared() {
         super.onCleared()
         stopPlayback()
+        preloadJob?.cancel()
+        preloadJob = null
     }
 }

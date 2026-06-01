@@ -2,6 +2,8 @@ package com.example.rainradar.ui.components
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
@@ -9,7 +11,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.rainradar.data.DwdWmsClient
 import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.MapTileProviderBasic
+import org.osmdroid.tileprovider.MapTileProviderArray
+import org.osmdroid.tileprovider.modules.MapTileApproximater
+import org.osmdroid.tileprovider.modules.MapTileDownloader
+import org.osmdroid.tileprovider.modules.MapTileFilesystemProvider
+import org.osmdroid.tileprovider.modules.TileWriter
+import org.osmdroid.tileprovider.util.SimpleRegisterReceiver
 import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.util.MapTileIndex
@@ -50,28 +57,72 @@ fun RadarMapView(
     frameTimes: List<Instant>,
     activeFrameIndex: Int,
     userLocation: GeoPoint?,
+    isPreloading: Boolean,
     modifier: Modifier = Modifier,
     onMapReady: (MapView) -> Unit = {}
 ) {
-    // Configure user agent for Osmdroid
+    // Configure user agent and internal cache directory for Osmdroid to prevent Scoped Storage crashes on Android 10+ / 16
     val context = androidx.compose.ui.platform.LocalContext.current
     remember {
-        Configuration.getInstance().userAgentValue = "DwdRainRadarApp"
-        Configuration.getInstance().load(context, context.getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
+        val osmConfig = Configuration.getInstance()
+        osmConfig.userAgentValue = "DwdRainRadarApp"
+        
+        // Use app-specific internal cache directory to bypass external storage write restrictions
+        val basePath = java.io.File(context.cacheDir, "osmdroid")
+        val tileCache = java.io.File(basePath, "tiles")
+        osmConfig.osmdroidBasePath = basePath
+        osmConfig.osmdroidTileCache = tileCache
+        
+        // Cache configuration: aggressive caching to prevent reloading of tiles when zooming
+        // Override the default WMS expiration (e.g., no-cache) with 24 hours.
+        // Since we use dynamic frame-time specific cache paths, there's no risk of stale data.
+        osmConfig.expirationOverrideDuration = 24 * 60 * 60 * 1000L // 24 hours
+        osmConfig.tileFileSystemCacheMaxBytes = 1024L * 1024 * 1024 // 1GB
+        osmConfig.tileFileSystemCacheTrimBytes = 800L * 1024 * 1024 // 800MB
+        
+        osmConfig.load(context, context.getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
+        osmConfig
     }
 
     val mapView = remember {
         MapView(context).apply {
             setMultiTouchControls(true)
             zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
+            isTilesScaledToDpi = true // Smoother zoom: scales tiles during pinch-zoom transitions
+            setHorizontalMapRepetitionEnabled(false)
+            setVerticalMapRepetitionEnabled(false)
             controller.setZoom(6.0)
             // Center of Germany
             controller.setCenter(GeoPoint(51.1657, 10.4515))
         }
     }
 
-    // Keep track of active overlays in a cache
-    val overlaysCache = remember { HashMap<String, TilesOverlay>() }
+    // Keep track of active overlays and their providers in a cache
+    val overlaysCache = remember { HashMap<String, Pair<TilesOverlay, MapTileProviderArray>>() }
+    
+    // Clean up cached overlays and providers when frameTimes changes or on dispose
+    // to prevent memory leaks, thread exhaustion, and SQLite connection locks.
+    DisposableEffect(frameTimes) {
+        onDispose {
+            overlaysCache.values.forEach { (overlay, provider) ->
+                overlay.onDetach(mapView)
+                provider.detach()
+            }
+            overlaysCache.clear()
+        }
+    }
+    
+    // Create a 100% transparent ColorFilter to load tiles invisibly
+    val transparentColorFilter = remember {
+        val matrix = ColorMatrix(floatArrayOf(
+            1f, 0f, 0f, 0f, 0f,
+            0f, 1f, 0f, 0f, 0f,
+            0f, 0f, 1f, 0f, 0f,
+            0f, 0f, 0f, 0f, 0f // alpha multiplier set to 0.0f
+        ))
+        ColorMatrixColorFilter(matrix)
+    }
+
     val userLocationMarker = remember {
         Marker(mapView).apply {
             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
@@ -91,45 +142,82 @@ fun RadarMapView(
         factory = { mapView },
         modifier = modifier,
         update = { view ->
-            // Update User Location Marker
-            if (userLocation != null) {
-                userLocationMarker.position = userLocation
-                if (!view.overlays.contains(userLocationMarker)) {
-                    view.overlays.add(userLocationMarker)
-                }
-            } else {
-                view.overlays.remove(userLocationMarker)
-            }
-
             // Sync dynamic overlay frames
             if (frameTimes.isNotEmpty() && activeFrameIndex in frameTimes.indices) {
-                val activeTimeStr = DwdWmsClient.formatIsoTime(frameTimes[activeFrameIndex])
 
-                // Pre-create overlays for all loaded frameTimes to allow background caching
-                frameTimes.forEach { time ->
+                // 1. Pre-create or retrieve overlays for all loaded frameTimes to maintain chronological order
+                val currentFrameOverlays = frameTimes.map { time ->
                     val timeStr = DwdWmsClient.formatIsoTime(time)
-                    if (!overlaysCache.containsKey(timeStr)) {
+                    val pair = overlaysCache.getOrPut(timeStr) {
                         val tileSource = DwdWmsTileSource(timeStr)
-                        val provider = MapTileProviderBasic(context, tileSource)
+                        // Osmdroid's 3-stage tile pipeline for flicker-free zooming:
+                        // 1. FilesystemProvider: reads cached tiles from disk (instant, no network)
+                        // 2. Approximater: scales cached tiles from nearby zoom levels during zoom transitions
+                        // 3. Downloader: fetches new tiles from DWD WMS server, saves via TileWriter (no SQLite)
+                        val receiver = SimpleRegisterReceiver(context)
+                        val tileWriter = TileWriter()
+                        val filesystemProvider = MapTileFilesystemProvider(receiver, tileSource)
+                        val approximater = MapTileApproximater().apply {
+                            addProvider(filesystemProvider)
+                        }
+                        val downloader = MapTileDownloader(tileSource, tileWriter)
+                        val provider = MapTileProviderArray(tileSource, receiver, arrayOf(filesystemProvider, approximater, downloader))
+                        
                         val overlay = TilesOverlay(provider, context).apply {
                             loadingBackgroundColor = Color.TRANSPARENT
                             loadingLineColor = Color.TRANSPARENT
                         }
-                        overlaysCache[timeStr] = overlay
+                        Pair(overlay, provider)
+                    }
+                    pair.first
+                }
+
+                // 2. Build the stable, desired overlays list: radar layers first (chronological order), then user location marker
+                val desiredOverlays = ArrayList<org.osmdroid.views.overlay.Overlay>()
+                desiredOverlays.addAll(currentFrameOverlays)
+                if (userLocation != null) {
+                    userLocationMarker.position = userLocation
+                    desiredOverlays.add(userLocationMarker)
+                }
+
+                // Apply desired overlays list to MapView only if there is a structure or order mismatch.
+                // This prevents resetting Osmdroid's internals or tile loaders during interactions.
+                var isMatch = view.overlays.size == desiredOverlays.size
+                if (isMatch) {
+                    for (i in desiredOverlays.indices) {
+                        if (view.overlays[i] != desiredOverlays[i]) {
+                            isMatch = false
+                            break
+                        }
                     }
                 }
 
-                // Add missing overlays to map view and update visibility
-                overlaysCache.forEach { (timeStr, overlay) ->
-                    val isCurrent = (timeStr == activeTimeStr)
-                    overlay.isEnabled = isCurrent
-                    
-                    if (isCurrent && !view.overlays.contains(overlay)) {
-                        // Insert at index 0 or before marker to ensure overlay renders under location markers
-                        view.overlays.add(0, overlay)
-                    } else if (!isCurrent && view.overlays.contains(overlay)) {
-                        // Keep it on the map for pre-fetching/smooth rendering, but set isEnabled = false
-                        overlay.isEnabled = false
+                if (!isMatch) {
+                    view.overlays.clear()
+                    view.overlays.addAll(desiredOverlays)
+                }
+
+                // 3. Define the active and previous indices for zero-flicker transitions
+                val visibleIndex = activeFrameIndex
+                val previousIndex = if (activeFrameIndex > 0) activeFrameIndex - 1 else -1
+
+                // 4. Update state properties (isEnabled, colorFilter) on all overlays based on preloading state
+                currentFrameOverlays.forEachIndexed { idx, overlay ->
+                    if (isPreloading) {
+                        // During preloading: enable all overlays so they actively download WMS tiles in the background
+                        overlay.isEnabled = true
+                        overlay.setColorFilter(transparentColorFilter) // Keep tiles invisible
+                    } else {
+                        // During playback/normal operation: only enable the current and previous overlays.
+                        // This gives 100% fluid GPU/CPU performance, completely removes orange block glitches,
+                        // and prevents grey shadow color build-up from stacked transparent layers.
+                        if (idx == visibleIndex || idx == previousIndex) {
+                            overlay.isEnabled = true
+                            overlay.setColorFilter(null) // Fully visible
+                        } else {
+                            overlay.isEnabled = false
+                            overlay.setColorFilter(null)
+                        }
                     }
                 }
 
