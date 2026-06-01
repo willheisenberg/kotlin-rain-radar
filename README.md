@@ -21,6 +21,35 @@ Die App folgt modernen Android-Architekturrichtlinien (MVVM):
 
 ## Ausführen und Testen
 
-1. Öffne den Ordner `/home/will/ownProjects/kotlin-rain-radar` in **Android Studio**.
+1. Öffne den Ordner `/home/tesla/githubprojects/kotlin-rain-radar` in **Android Studio**.
 2. Lass Gradle das Projekt synchronisieren.
 3. Starte die App auf einem Android-Emulator oder physischen Device (erfordert Android API 26+).
+
+---
+
+## APK bauen (Build APK)
+
+Es gibt zwei zuverlässige Wege, die Installationsdatei (`.apk`) für dein Android-Gerät zu erzeugen:
+
+### Methode 1: Über die Android Studio Oberfläche (Empfohlen)
+Diese Methode ist am sichersten, da Android Studio automatisch seine eigene, kompatible Java-Umgebung (JBR) nutzt und somit Konflikte mit neueren Java-Versionen auf deinem Betriebssystem (z. B. OpenJDK 26 unter Arch Linux) vermeidet.
+
+1. Öffne das Projekt in **Android Studio**.
+2. Klicke in der oberen Menüleiste auf **Build** -> **Build Bundle(s) / APK(s)** -> **Build APK(s)**.
+3. Android Studio kompiliert die App. Sobald der Vorgang abgeschlossen ist, erscheint unten rechts ein Pop-up-Fenster.
+4. Klicke im Pop-up auf **locate**. Dein Dateimanager öffnet sich direkt im Ordner mit der fertigen APK-Datei (`app-debug.apk`).
+   - *Alternativ findest du die Datei unter:* `app/build/outputs/apk/debug/app-debug.apk`
+
+### Methode 2: Über das Terminal (Kommandozeile)
+Da auf sehr aktuellen Linux-Distributionen (z. B. Arch Linux) OpenJDK 26 installiert sein kann, führt der einfache Aufruf von `./gradlew assembleDebug` manchmal zu einem Compiler-Parser-Fehler. 
+
+Um diesen zu umgehen, kannst du Gradle mitteilen, die integrierte Java-Version von Android Studio (JBR) zu verwenden. Starte dazu den Build im Terminal wie folgt:
+
+```bash
+# Verwende die in Android Studio integrierte Java-Laufzeitumgebung zum Bauen:
+JAVA_HOME=/opt/android-studio/jbr/ ./gradlew assembleDebug
+```
+*(Hinweis: Falls du Android Studio über die JetBrains Toolbox installiert hast, liegt der Pfad meist unter `~/.local/share/JetBrains/Toolbox/apps/android-studio/jbr/`)*
+
+Die fertige APK-Datei liegt nach dem Durchlauf unter:
+`app/build/outputs/apk/debug/app-debug.apk`

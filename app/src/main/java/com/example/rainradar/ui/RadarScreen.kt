@@ -85,8 +85,9 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
 
     var userLocation by remember { mutableStateOf<GeoPoint?>(null) }
     var mapViewInstance by remember { mutableStateOf<MapView?>(null) }
+    var hasCenteredOnUser by remember { mutableStateOf(false) }
 
-    // Setup GPS Location Updates
+    // Setup GPS & Network Location Updates
     val locationManager = remember { context.getSystemService(Context.LOCATION_SERVICE) as LocationManager }
     val locationListener = remember {
         object : LocationListener {
@@ -99,34 +100,97 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
         }
     }
 
+    var permissionGranted by remember {
+        mutableStateOf(
+            androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+            androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        )
+    }
+
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-                      permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        if (granted) {
-            try {
-                val lastKnown = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                    ?: locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-                if (lastKnown != null) {
-                    userLocation = GeoPoint(lastKnown.latitude, lastKnown.longitude)
-                }
-                locationManager.requestLocationUpdates(
-                    LocationManager.GPS_PROVIDER, 10000L, 10f, locationListener
-                )
-            } catch (e: SecurityException) {
-                // Handle exception
-            }
-        }
+        permissionGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                            permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
     }
 
     LaunchedEffect(Unit) {
-        locationPermissionLauncher.launch(
-            arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
+        if (!permissionGranted) {
+            locationPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
             )
-        )
+        }
+    }
+
+    // Animate map to user's location once it is first resolved
+    LaunchedEffect(userLocation, mapViewInstance) {
+        val loc = userLocation
+        val map = mapViewInstance
+        if (loc != null && map != null && !hasCenteredOnUser) {
+            map.controller.animateTo(loc, 9.5, 1000L)
+            hasCenteredOnUser = true
+        }
+    }
+
+    DisposableEffect(permissionGranted) {
+        if (permissionGranted) {
+            try {
+                // 1. Fetch best possible last known location instantly (GPS or Network)
+                val lastKnownGps = try {
+                    if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                        locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                    } else null
+                } catch (e: Exception) { null }
+
+                val lastKnownNetwork = try {
+                    if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                        locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                    } else null
+                } catch (e: Exception) { null }
+
+                val bestLastKnown = when {
+                    lastKnownGps != null && lastKnownNetwork != null -> {
+                        if (lastKnownGps.time >= lastKnownNetwork.time) lastKnownGps else lastKnownNetwork
+                    }
+                    lastKnownGps != null -> lastKnownGps
+                    else -> lastKnownNetwork
+                }
+
+                if (bestLastKnown != null) {
+                    userLocation = GeoPoint(bestLastKnown.latitude, bestLastKnown.longitude)
+                }
+
+                // 2. Request updates from BOTH GPS (high accuracy) and Network (indoor fallback)
+                if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                    locationManager.requestLocationUpdates(
+                        LocationManager.GPS_PROVIDER,
+                        5000L,
+                        10f,
+                        locationListener
+                    )
+                }
+                if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                    locationManager.requestLocationUpdates(
+                        LocationManager.NETWORK_PROVIDER,
+                        5000L,
+                        10f,
+                        locationListener
+                    )
+                }
+            } catch (e: SecurityException) {
+                // Permission revoked or not granted
+            }
+        }
+        onDispose {
+            try {
+                locationManager.removeUpdates(locationListener)
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
     }
 
     Surface(
