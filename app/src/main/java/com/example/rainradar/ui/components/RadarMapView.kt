@@ -25,6 +25,12 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.TilesOverlay
 import java.time.Instant
+import android.animation.ValueAnimator
+import android.view.animation.LinearInterpolator
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.PixelFormat
+import android.graphics.drawable.Drawable
 
 class DwdWmsTileSource(timeString: String) : OnlineTileSourceBase(
     "DWD_Radar_$timeString",
@@ -123,10 +129,12 @@ fun RadarMapView(
         ColorMatrixColorFilter(matrix)
     }
 
+    val locationDrawable = remember { LocationDotDrawable(context) }
+
     val userLocationMarker = remember {
         Marker(mapView).apply {
             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-            // Custom high-quality marker using built-in shape or resource later
+            icon = locationDrawable
             title = "Dein Standort"
         }
     }
@@ -134,6 +142,7 @@ fun RadarMapView(
     DisposableEffect(mapView) {
         onMapReady(mapView)
         onDispose {
+            locationDrawable.stopAnimation()
             mapView.onDetach()
         }
     }
@@ -226,4 +235,72 @@ fun RadarMapView(
             }
         }
     )
+}
+
+class LocationDotDrawable(context: Context) : Drawable() {
+    private val density = context.resources.displayMetrics.density
+    
+    private val coreRadius = 8f * density
+    private val borderRadius = 10f * density
+    private val maxHaloRadius = 22f * density
+    private val minHaloRadius = 10f * density
+    
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var haloAlpha = 0.2f
+    private var haloRadius = minHaloRadius
+    
+    private val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+        duration = 2000
+        repeatCount = ValueAnimator.INFINITE
+        repeatMode = ValueAnimator.RESTART
+        interpolator = LinearInterpolator()
+        addUpdateListener { animation ->
+            val fraction = animation.animatedValue as Float
+            // Halo expands from minHaloRadius to maxHaloRadius
+            haloRadius = minHaloRadius + (maxHaloRadius - minHaloRadius) * fraction
+            // Halo fades out as it expands
+            haloAlpha = 0.25f * (1f - fraction)
+            invalidateSelf()
+        }
+    }
+    
+    init {
+        animator.start()
+    }
+    
+    override fun draw(canvas: Canvas) {
+        val bounds = bounds
+        val cx = bounds.exactCenterX()
+        val cy = bounds.exactCenterY()
+        
+        // 1. Draw pulsing outer halo (semi-transparent blue)
+        paint.color = 0xFF3B82F6.toInt()
+        paint.alpha = (haloAlpha * 255).toInt()
+        paint.style = Paint.Style.FILL
+        canvas.drawCircle(cx, cy, haloRadius, paint)
+        
+        // 2. Draw subtle shadow under the white border
+        paint.color = 0x44000000 // 27% black
+        paint.alpha = 255
+        canvas.drawCircle(cx, cy + 1.5f * density, borderRadius + 0.5f * density, paint)
+        
+        // 3. Draw white border
+        paint.color = 0xFFFFFFFF.toInt()
+        canvas.drawCircle(cx, cy, borderRadius, paint)
+        
+        // 4. Draw blue core
+        paint.color = 0xFF3B82F6.toInt()
+        canvas.drawCircle(cx, cy, coreRadius, paint)
+    }
+    
+    override fun setAlpha(alpha: Int) {}
+    override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {}
+    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    
+    override fun getIntrinsicWidth(): Int = (maxHaloRadius * 2).toInt()
+    override fun getIntrinsicHeight(): Int = (maxHaloRadius * 2).toInt()
+    
+    fun stopAnimation() {
+        animator.cancel()
+    }
 }
