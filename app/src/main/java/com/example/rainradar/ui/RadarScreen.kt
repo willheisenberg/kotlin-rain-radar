@@ -384,72 +384,35 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                 )
             }
 
-            // ── Floating Zoom / Location buttons (Bottom-Left above controller) ──
-            Column(
+            // ── Floating Location button (Bottom-Left above controller) ──
+            AnimatedVisibility(
+                visible = userLocation != null,
+                enter = fadeIn(),
+                exit = fadeOut(),
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(bottom = 150.dp, start = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                    .padding(bottom = 150.dp, start = 12.dp)
             ) {
-                // Zoom In
-                SmallFloatingActionButton(
+                FloatingActionButton(
                     onClick = {
-                        mapViewInstance?.let {
-                            it.controller.zoomIn()
-                        }
-                    },
-                    containerColor = SurfaceBg,
-                    contentColor = TextPrimary,
-                    shape = CircleShape,
-                    modifier = Modifier
-                        .size(38.dp)
-                        .border(1.dp, BorderColor, CircleShape)
-                ) {
-                    Text("+", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                }
-
-                // Zoom Out
-                SmallFloatingActionButton(
-                    onClick = {
-                        mapViewInstance?.let {
-                            it.controller.zoomOut()
-                        }
-                    },
-                    containerColor = SurfaceBg,
-                    contentColor = TextPrimary,
-                    shape = CircleShape,
-                    modifier = Modifier
-                        .size(38.dp)
-                        .border(1.dp, BorderColor, CircleShape)
-                ) {
-                    Text("−", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                }
-
-                // Location Jump
-                AnimatedVisibility(
-                    visible = userLocation != null,
-                    enter = fadeIn(),
-                    exit = fadeOut()
-                ) {
-                    SmallFloatingActionButton(
-                        onClick = {
-                            userLocation?.let { loc ->
-                                mapViewInstance?.let { map ->
-                                    map.controller.animateTo(loc, 9.5, 1000L)
-                                }
+                        userLocation?.let { loc ->
+                            mapViewInstance?.let { map ->
+                                map.controller.animateTo(loc, 9.5, 1000L)
                             }
-                        },
-                        containerColor = AccentBlue,
-                        contentColor = Color.White,
-                        shape = CircleShape,
-                        modifier = Modifier.size(38.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.LocationOn,
-                            contentDescription = "Zu Standort springen",
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                        }
+                    },
+                    containerColor = AccentBlue,
+                    contentColor = Color.White,
+                    shape = CircleShape,
+                    modifier = Modifier
+                        .size(53.dp)
+                        .border(1.dp, BorderColor.copy(alpha = 0.5f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.LocationOn,
+                        contentDescription = "Zu Standort springen",
+                        modifier = Modifier.size(25.dp)
+                    )
                 }
             }
 
