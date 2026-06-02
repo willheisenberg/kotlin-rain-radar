@@ -61,7 +61,6 @@ fun formatLocalTimeStr(instant: Instant?): String {
 @Composable
 fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose.viewModel()) {
     val context = LocalContext.current
-    val showForecast by viewModel.showForecast.collectAsState()
     val frameTimes by viewModel.frameTimes.collectAsState()
     val activeFrameIndex by viewModel.activeFrameIndex.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
@@ -69,60 +68,30 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
 
     val preloadProgress by viewModel.preloadProgress.collectAsState()
 
-    // Real tile-cache progress checker: polls the filesystem every 300ms to see
-    // which frames have actually downloaded their tiles into the osmdroid cache.
-    LaunchedEffect(isPreloading, frameTimes) {
-        if (isPreloading && frameTimes.isNotEmpty()) {
-            val cacheDir = java.io.File(context.cacheDir, "osmdroid/tiles")
-
-            // Reference tile coordinates: center of Germany (51.1657°N, 10.4515°E) at zoom 6
-            // This is the tile that osmdroid downloads first for the default viewport.
-            val refZoom = 6
-            val lat = Math.toRadians(51.1657)
-            val n = (1 shl refZoom).toDouble()
-            val refX = ((10.4515 + 180.0) / 360.0 * n).toInt()
-            val refY = ((1.0 - Math.log(Math.tan(lat) + 1.0 / Math.cos(lat)) / Math.PI) / 2.0 * n).toInt()
-
-            // Minimum display time so the spinner doesn't flash away instantly when tiles are cached
-            val minDisplayTime = 1500L
-            val startTime = System.currentTimeMillis()
-
-            while (true) {
-                var loadedCount = 0
-                for (time in frameTimes) {
-                    val timeStr = com.example.rainradar.data.DwdWmsClient.formatIsoTime(time)
-                    // Osmdroid TileWriter saves tiles at: {cache}/DWD_Radar_{timeStr}/{zoom}/{x}/{y}.png.tile
-                    val tileFile = java.io.File(cacheDir, "DWD_Radar_$timeStr/$refZoom/$refX/$refY.png.tile")
-                    if (tileFile.exists()) {
-                        loadedCount++
-                    }
-                }
-
-                val progress = loadedCount.toFloat() / frameTimes.size.toFloat()
-                val elapsed = System.currentTimeMillis() - startTime
-
-                if (loadedCount >= frameTimes.size && elapsed >= minDisplayTime) {
-                    viewModel.updatePreloadProgress(1f)
-                    break
-                } else {
-                    viewModel.updatePreloadProgress(progress.coerceAtMost(0.99f))
-                }
-
-                kotlinx.coroutines.delay(300)
-            }
-        }
+    // Refresh and preload frames on launch
+    LaunchedEffect(Unit) {
+        viewModel.refreshData(context)
     }
 
     var userLocation by remember { mutableStateOf<GeoPoint?>(null) }
     var mapViewInstance by remember { mutableStateOf<MapView?>(null) }
     var hasCenteredOnUser by remember { mutableStateOf(false) }
 
+    // Helper to validate if GPS location is within the radar's bounding box coverage
+    fun isLocationInRadarBounds(point: GeoPoint?): Boolean {
+        if (point == null) return false
+        val lat = point.latitude
+        val lon = point.longitude
+        return lat in 45.0..56.576107 && lon in 2.0..19.0
+    }
+
     // Setup GPS & Network Location Updates
     val locationManager = remember { context.getSystemService(Context.LOCATION_SERVICE) as LocationManager }
     val locationListener = remember {
         object : LocationListener {
             override fun onLocationChanged(location: Location) {
-                userLocation = GeoPoint(location.latitude, location.longitude)
+                val point = GeoPoint(location.latitude, location.longitude)
+                userLocation = if (isLocationInRadarBounds(point)) point else null
             }
             override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) {}
             override fun onProviderEnabled(provider: String) {}
@@ -190,7 +159,8 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                 }
 
                 if (bestLastKnown != null) {
-                    userLocation = GeoPoint(bestLastKnown.latitude, bestLastKnown.longitude)
+                    val point = GeoPoint(bestLastKnown.latitude, bestLastKnown.longitude)
+                    userLocation = if (isLocationInRadarBounds(point)) point else null
                 }
 
                 // 2. Request updates from BOTH GPS (high accuracy) and Network (indoor fallback)
@@ -267,27 +237,8 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                 }
                 Spacer(modifier = Modifier.weight(1f))
                 
-                Button(
-                    onClick = { viewModel.toggleForecast() },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (showForecast) AccentBlue else AccentGreen
-                    ),
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    modifier = Modifier.height(32.dp)
-                ) {
-                    Text(
-                        text = if (showForecast) "🔮 Vorhersage" else "⏪ Verlauf",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
                 IconButton(
-                    onClick = { viewModel.refreshData() },
+                    onClick = { viewModel.refreshData(context) },
                     modifier = Modifier.size(32.dp)
                 ) {
                     Icon(
@@ -318,18 +269,19 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
             }
 
             // ── Mode Badge Indicator (Top-Right under header) ──
+            val isActiveForecast = activeFrameIndex >= 36
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(top = 90.dp, end = 12.dp)
                     .background(
-                        color = if (showForecast) AccentBlue.copy(alpha = 0.9f) else AccentGreen.copy(alpha = 0.9f),
+                        color = if (isActiveForecast) AccentBlue.copy(alpha = 0.9f) else AccentGreen.copy(alpha = 0.9f),
                         shape = RoundedCornerShape(6.dp)
                     )
                     .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
                 Text(
-                    text = if (showForecast) "Vorhersage" else "Verlauf",
+                    text = if (isActiveForecast) "Vorhersage" else "Verlauf",
                     color = Color.White,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
@@ -489,22 +441,51 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
 
                     Spacer(modifier = Modifier.width(12.dp))
 
-                    // Dynamic Frame slider
-                    Slider(
-                        value = activeFrameIndex.toFloat(),
-                        onValueChange = { viewModel.setActiveFrameIndex(it.toInt()) },
-                        enabled = !isPreloading,
-                        valueRange = 0f..maxOf(0f, (frameTimes.size - 1).toFloat()),
-                        steps = maxOf(0, frameTimes.size - 2),
-                        colors = SliderDefaults.colors(
-                            activeTrackColor = AccentBlue,
-                            inactiveTrackColor = BorderColor,
-                            thumbColor = AccentBlue,
-                            disabledActiveTrackColor = BorderColor,
-                            disabledThumbColor = BorderColor
-                        ),
-                        modifier = Modifier.weight(1f)
-                    )
+                    // Combined Slider with dual-colored background track
+                    Box(
+                        modifier = Modifier
+                            .weight(1f),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        // Background track representing past/history (60% width) and forecast (40% width)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(4.dp)
+                                .padding(horizontal = 8.dp) // Align with slider thumb padding
+                                .clip(RoundedCornerShape(2.dp))
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(36f)
+                                    .fillMaxHeight()
+                                    .background(AccentGreen.copy(alpha = 0.8f))
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .weight(24f)
+                                    .fillMaxHeight()
+                                    .background(AccentBlue.copy(alpha = 0.8f))
+                            )
+                        }
+
+                        val sliderMax = maxOf(0f, (frameTimes.size - 1).toFloat())
+                        Slider(
+                            value = activeFrameIndex.toFloat().coerceIn(0f, maxOf(0.1f, sliderMax)),
+                            onValueChange = { viewModel.setActiveFrameIndex(it.toInt()) },
+                            enabled = !isPreloading,
+                            valueRange = 0f..maxOf(0.1f, sliderMax),
+                            steps = maxOf(0, frameTimes.size - 2),
+                            colors = SliderDefaults.colors(
+                                activeTrackColor = Color.Transparent,
+                                inactiveTrackColor = Color.Transparent,
+                                thumbColor = if (activeFrameIndex < 36) AccentGreen else AccentBlue,
+                                disabledActiveTrackColor = Color.Transparent,
+                                disabledInactiveTrackColor = Color.Transparent
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
 
                     Spacer(modifier = Modifier.width(12.dp))
 
