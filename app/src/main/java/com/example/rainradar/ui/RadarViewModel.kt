@@ -1,5 +1,6 @@
 package com.example.rainradar.ui
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.rainradar.data.DwdWmsClient
@@ -12,13 +13,10 @@ import kotlinx.coroutines.launch
 import java.time.Instant
 
 class RadarViewModel : ViewModel() {
-    private val _showForecast = MutableStateFlow(true)
-    val showForecast: StateFlow<Boolean> = _showForecast.asStateFlow()
-
     private val _frameTimes = MutableStateFlow<List<Instant>>(emptyList())
     val frameTimes: StateFlow<List<Instant>> = _frameTimes.asStateFlow()
 
-    private val _activeFrameIndex = MutableStateFlow(0)
+    private val _activeFrameIndex = MutableStateFlow(35) // Start at index 35 (the current live frame)
     val activeFrameIndex: StateFlow<Int> = _activeFrameIndex.asStateFlow()
 
     private val _isPlaying = MutableStateFlow(false)
@@ -32,42 +30,60 @@ class RadarViewModel : ViewModel() {
 
     private var playbackJob: Job? = null
     private var preloadJob: Job? = null
-    private val maxFrames = 24
 
     init {
-        refreshData()
+        refreshData(null)
     }
 
-    fun toggleForecast() {
-        _showForecast.value = !_showForecast.value
-        refreshData()
-    }
-
-    fun refreshData() {
+    fun refreshData(context: Context? = null) {
         stopPlayback()
         preloadJob?.cancel()
 
-        val times = DwdWmsClient.generateFrameTimes(_showForecast.value, maxFrames)
+        val times = DwdWmsClient.generateCombinedFrameTimes()
         _frameTimes.value = times
-        _activeFrameIndex.value = if (_showForecast.value) 0 else maxFrames - 1
+        _activeFrameIndex.value = 35 // Reset to the current live frame
+
+        if (context == null) {
+            _isPreloading.value = false
+            _preloadProgress.value = 1f
+            return
+        }
 
         _isPreloading.value = true
         _preloadProgress.value = 0f
 
-        // Safety timeout: if preloading takes more than 30 seconds (e.g. no internet),
-        // force-finish to prevent blocking the user forever
-        preloadJob = viewModelScope.launch {
-            delay(30000)
-            if (_isPreloading.value) {
-                _isPreloading.value = false
-                _preloadProgress.value = 1f
+        // Launch preloader job on background IO threads
+        preloadJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val total = times.size
+            var completed = 0
+            
+            // Download frames concurrently up to 5 parallel tasks
+            val semaphore = kotlinx.coroutines.sync.Semaphore(5)
+            val jobs = times.map { time ->
+                launch {
+                    semaphore.acquire()
+                    try {
+                        DwdWmsClient.downloadFrame(context, time)
+                    } finally {
+                        semaphore.release()
+                        synchronized(this@RadarViewModel) {
+                            completed++
+                            _preloadProgress.value = completed.toFloat() / total
+                        }
+                    }
+                }
             }
+            
+            // Wait for all downloads to finish or time out
+            jobs.forEach { it.join() }
+            
+            _isPreloading.value = false
+            _preloadProgress.value = 1f
         }
     }
 
     /**
-     * Called by the UI layer to report real tile-cache progress (0f..1f).
-     * When progress reaches 1.0, preloading is automatically finished.
+     * Retained for compatibility.
      */
     fun updatePreloadProgress(progress: Float) {
         _preloadProgress.value = progress
