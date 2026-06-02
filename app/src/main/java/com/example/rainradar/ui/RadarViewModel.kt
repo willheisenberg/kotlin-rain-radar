@@ -30,12 +30,18 @@ class RadarViewModel : ViewModel() {
 
     private var playbackJob: Job? = null
     private var preloadJob: Job? = null
+    private var autoRefreshJob: Job? = null
+    private var appContext: Context? = null
 
     init {
         refreshData(null)
+        startAutoRefreshPolling()
     }
 
     fun refreshData(context: Context? = null) {
+        if (context != null && appContext == null) {
+            appContext = context.applicationContext
+        }
         stopPlayback()
         preloadJob?.cancel()
 
@@ -43,11 +49,13 @@ class RadarViewModel : ViewModel() {
         _frameTimes.value = times
         _activeFrameIndex.value = 35 // Reset to the current live frame
 
-        if (context == null) {
+        if (context == null && appContext == null) {
             _isPreloading.value = false
             _preloadProgress.value = 1f
             return
         }
+        
+        val activeContext = context ?: appContext ?: return
 
         _isPreloading.value = true
         _preloadProgress.value = 0f
@@ -63,7 +71,7 @@ class RadarViewModel : ViewModel() {
                 launch {
                     semaphore.acquire()
                     try {
-                        DwdWmsClient.downloadFrame(context, time)
+                        DwdWmsClient.downloadFrame(activeContext, time)
                     } finally {
                         semaphore.release()
                         synchronized(this@RadarViewModel) {
@@ -128,11 +136,37 @@ class RadarViewModel : ViewModel() {
         playbackJob = null
     }
 
+    private fun startAutoRefreshPolling() {
+        autoRefreshJob?.cancel()
+        autoRefreshJob = viewModelScope.launch {
+            while (true) {
+                delay(30000) // 30 seconds
+                val times = _frameTimes.value
+                if (times.size >= 60) {
+                    val currentBaseTime = times[35]
+                    
+                    // Calculate what the baseTime should be right now
+                    val now = Instant.now()
+                    val epochSec = now.epochSecond
+                    val roundedSec = ((epochSec - 600) / 300) * 300
+                    val expectedBaseTime = Instant.ofEpochSecond(roundedSec)
+                    
+                    if (expectedBaseTime != currentBaseTime) {
+                        // A new frame is available! Trigger refresh
+                        refreshData(appContext)
+                    }
+                }
+            }
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         stopPlayback()
         preloadJob?.cancel()
         preloadJob = null
+        autoRefreshJob?.cancel()
+        autoRefreshJob = null
     }
 }
 
