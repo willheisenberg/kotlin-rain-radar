@@ -1,9 +1,6 @@
 package com.example.rainradar.ui.components
 
 import android.content.Context
-import android.graphics.Color
-import android.graphics.ColorMatrix
-import android.graphics.ColorMatrixColorFilter
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
@@ -11,19 +8,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.rainradar.data.DwdWmsClient
 import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.MapTileProviderArray
-import org.osmdroid.tileprovider.modules.MapTileApproximater
-import org.osmdroid.tileprovider.modules.MapTileDownloader
-import org.osmdroid.tileprovider.modules.MapTileFilesystemProvider
-import org.osmdroid.tileprovider.modules.TileWriter
-import org.osmdroid.tileprovider.util.SimpleRegisterReceiver
-import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.util.GeoPoint
-import org.osmdroid.util.MapTileIndex
 import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
-import org.osmdroid.views.overlay.TilesOverlay
 import java.time.Instant
 import android.animation.ValueAnimator
 import android.view.animation.LinearInterpolator
@@ -32,30 +20,52 @@ import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
 
-class DwdWmsTileSource(timeString: String) : OnlineTileSourceBase(
-    "DWD_Radar_$timeString",
-    0, 18, 256, ".png",
-    arrayOf(DwdWmsClient.WMS_BASE_URL)
-) {
-    private val wmsTime = timeString
+class RadarBboxOverlay : org.osmdroid.views.overlay.Overlay() {
+    var bitmap: android.graphics.Bitmap? = null
 
-    override fun getTileURLString(pMapTileIndex: Long): String {
-        val zoom = MapTileIndex.getZoom(pMapTileIndex)
-        val x = MapTileIndex.getX(pMapTileIndex)
-        val y = MapTileIndex.getY(pMapTileIndex)
-        
-        val bbox = DwdWmsClient.tileToBBoxEPSG3857(x, y, zoom)
-        
-        return "$baseUrl?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap" +
-                "&LAYERS=${DwdWmsClient.WMS_LAYER}" +
-                "&STYLES=" +
-                "&CRS=EPSG:3857" +
-                "&BBOX=${bbox}" +
-                "&WIDTH=256&HEIGHT=256" +
-                "&FORMAT=image/png" +
-                "&TRANSPARENT=TRUE" +
-                "&TIME=${wmsTime}"
+    override fun draw(canvas: Canvas, mapView: MapView, shadow: Boolean) {
+        if (shadow) return
+        val bmp = bitmap ?: return
+
+        val projection = mapView.projection
+        val nwPoint = android.graphics.Point()
+        val sePoint = android.graphics.Point()
+
+        // NW corner: Lat 56.576107, Lon 2.0
+        projection.toPixels(GeoPoint(56.576107, 2.0), nwPoint)
+        // SE corner: Lat 45.0, Lon 19.0
+        projection.toPixels(GeoPoint(45.0, 19.0), sePoint)
+
+        val left = nwPoint.x
+        val top = nwPoint.y
+        val right = sePoint.x
+        val bottom = sePoint.y
+
+        val destRect = android.graphics.Rect(left, top, right, bottom)
+        canvas.drawBitmap(bmp, null, destRect, null)
     }
+}
+
+private fun calculateMinZoom(mapWidth: Int, mapHeight: Int): Double {
+    if (mapWidth <= 0 || mapHeight <= 0) return 6.0
+
+    // Lon constraint:
+    // Z >= log2( (W * 360.0) / (256.0 * 17.0) )
+    val minZoomLon = Math.log((mapWidth.toDouble() * 360.0) / (256.0 * 17.0)) / Math.log(2.0)
+
+    // Lat constraint:
+    // delta_y = ln(tan(pi/4 + lat_N/2)) - ln(tan(pi/4 + lat_S/2))
+    // Z >= log2( H * 2 * pi / (256.0 * delta_y) )
+    val latN = Math.toRadians(56.576107)
+    val latS = Math.toRadians(45.0)
+    val yN = Math.log(Math.tan(Math.PI / 4.0 + latN / 2.0))
+    val yS = Math.log(Math.tan(Math.PI / 4.0 + latS / 2.0))
+    val deltaY = yN - yS
+    val minZoomLat = Math.log((mapHeight.toDouble() * 2.0 * Math.PI) / (256.0 * deltaY)) / Math.log(2.0)
+
+    // Using minOf and subtracting 1.0 ensures that the entire radar frame fits in the viewport with a comfortable margin
+    val minZoom = minOf(minZoomLon, minZoomLat) - 1.0
+    return maxOf(3.0, minZoom)
 }
 
 @Composable
@@ -67,21 +77,16 @@ fun RadarMapView(
     modifier: Modifier = Modifier,
     onMapReady: (MapView) -> Unit = {}
 ) {
-    // Configure user agent and internal cache directory for Osmdroid to prevent Scoped Storage crashes on Android 10+ / 16
     val context = androidx.compose.ui.platform.LocalContext.current
     remember {
         val osmConfig = Configuration.getInstance()
         osmConfig.userAgentValue = "DwdRainRadarApp"
         
-        // Use app-specific internal cache directory to bypass external storage write restrictions
         val basePath = java.io.File(context.cacheDir, "osmdroid")
         val tileCache = java.io.File(basePath, "tiles")
         osmConfig.osmdroidBasePath = basePath
         osmConfig.osmdroidTileCache = tileCache
         
-        // Cache configuration: aggressive caching to prevent reloading of tiles when zooming
-        // Override the default WMS expiration (e.g., no-cache) with 24 hours.
-        // Since we use dynamic frame-time specific cache paths, there's no risk of stale data.
         osmConfig.expirationOverrideDuration = 24 * 60 * 60 * 1000L // 24 hours
         osmConfig.tileFileSystemCacheMaxBytes = 1024L * 1024 * 1024 // 1GB
         osmConfig.tileFileSystemCacheTrimBytes = 800L * 1024 * 1024 // 800MB
@@ -90,43 +95,92 @@ fun RadarMapView(
         osmConfig
     }
 
+    // Keep memory cache of bitmaps to avoid decoding them repeatedly on draw
+    val bitmapCache = remember { HashMap<String, android.graphics.Bitmap>() }
+
+    // Clear bitmap cache and recycle old bitmaps when frameTimes change
+    DisposableEffect(frameTimes) {
+        onDispose {
+            bitmapCache.values.forEach { it.recycle() }
+            bitmapCache.clear()
+        }
+    }
+
     val mapView = remember {
         MapView(context).apply {
             setMultiTouchControls(true)
             zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
-            isTilesScaledToDpi = true // Smoother zoom: scales tiles during pinch-zoom transitions
+            isTilesScaledToDpi = true
             setHorizontalMapRepetitionEnabled(false)
             setVerticalMapRepetitionEnabled(false)
+            
+            // Set initial state
             controller.setZoom(6.0)
-            // Center of Germany
             controller.setCenter(GeoPoint(51.1657, 10.4515))
-        }
-    }
 
-    // Keep track of active overlays and their providers in a cache
-    val overlaysCache = remember { HashMap<String, Pair<TilesOverlay, MapTileProviderArray>>() }
-    
-    // Clean up cached overlays and providers when frameTimes changes or on dispose
-    // to prevent memory leaks, thread exhaustion, and SQLite connection locks.
-    DisposableEffect(frameTimes) {
-        onDispose {
-            overlaysCache.values.forEach { (overlay, provider) ->
-                overlay.onDetach(mapView)
-                provider.detach()
+            // Add map clamping listener
+            val clampMap = {
+                val w = width
+                val h = height
+                if (w > 0 && h > 0) {
+                    val minZoom = calculateMinZoom(w, h)
+                    if (zoomLevelDouble < minZoom) {
+                        controller.setZoom(minZoom)
+                    }
+                    val bbox = boundingBox
+                    if (bbox != null && 
+                        !bbox.latNorth.isNaN() && !bbox.latSouth.isNaN() && 
+                        !bbox.lonWest.isNaN() && !bbox.lonEast.isNaN()) {
+                        
+                        val center = mapCenter
+                        var newLat = center.latitude
+                        var newLon = center.longitude
+
+                        // Longitude clamping / centering
+                        if (bbox.longitudeSpan >= 17.0) {
+                            newLon = 10.5 // Center of [2.0, 19.0]
+                        } else {
+                            if (bbox.lonWest < 2.0) {
+                                newLon += (2.0 - bbox.lonWest)
+                            } else if (bbox.lonEast > 19.0) {
+                                newLon -= (bbox.lonEast - 19.0)
+                            }
+                        }
+
+                        // Latitude clamping / centering
+                        val radarLatSpan = 56.576107 - 45.0
+                        if (bbox.latitudeSpan >= radarLatSpan) {
+                            newLat = 50.7880535 // Center of [45.0, 56.576107]
+                        } else {
+                            if (bbox.latNorth > 56.576107) {
+                                newLat -= (bbox.latNorth - 56.576107)
+                            } else if (bbox.latSouth < 45.0) {
+                                newLat += (45.0 - bbox.latSouth)
+                            }
+                        }
+
+                        if (Math.abs(newLat - center.latitude) > 1e-6 || Math.abs(newLon - center.longitude) > 1e-6) {
+                            controller.setCenter(GeoPoint(newLat, newLon))
+                        }
+                    }
+                }
             }
-            overlaysCache.clear()
+
+            addMapListener(object : org.osmdroid.events.MapListener {
+                override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
+                    clampMap()
+                    return true
+                }
+                override fun onZoom(event: org.osmdroid.events.ZoomEvent?): Boolean {
+                    clampMap()
+                    return true
+                }
+            })
+
+            addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                clampMap()
+            }
         }
-    }
-    
-    // Create a 100% transparent ColorFilter to load tiles invisibly
-    val transparentColorFilter = remember {
-        val matrix = ColorMatrix(floatArrayOf(
-            1f, 0f, 0f, 0f, 0f,
-            0f, 1f, 0f, 0f, 0f,
-            0f, 0f, 1f, 0f, 0f,
-            0f, 0f, 0f, 0f, 0f // alpha multiplier set to 0.0f
-        ))
-        ColorMatrixColorFilter(matrix)
     }
 
     val locationDrawable = remember { LocationDotDrawable(context) }
@@ -138,6 +192,8 @@ fun RadarMapView(
             title = "Dein Standort"
         }
     }
+
+    val radarOverlay = remember { RadarBboxOverlay() }
 
     DisposableEffect(mapView) {
         onMapReady(mapView)
@@ -151,46 +207,56 @@ fun RadarMapView(
         factory = { mapView },
         modifier = modifier,
         update = { view ->
-            // Sync dynamic overlay frames
-            if (frameTimes.isNotEmpty() && activeFrameIndex in frameTimes.indices) {
-
-                // 1. Pre-create or retrieve overlays for all loaded frameTimes to maintain chronological order
-                val currentFrameOverlays = frameTimes.map { time ->
+            if (frameTimes.isNotEmpty()) {
+                // 1. Decode/fetch bitmaps from cache/disk
+                val currentFrameBitmaps = frameTimes.map { time ->
                     val timeStr = DwdWmsClient.formatIsoTime(time)
-                    val pair = overlaysCache.getOrPut(timeStr) {
-                        val tileSource = DwdWmsTileSource(timeStr)
-                        // Osmdroid's 3-stage tile pipeline for flicker-free zooming:
-                        // 1. FilesystemProvider: reads cached tiles from disk (instant, no network)
-                        // 2. Approximater: scales cached tiles from nearby zoom levels during zoom transitions
-                        // 3. Downloader: fetches new tiles from DWD WMS server, saves via TileWriter (no SQLite)
-                        val receiver = SimpleRegisterReceiver(context)
-                        val tileWriter = TileWriter()
-                        val filesystemProvider = MapTileFilesystemProvider(receiver, tileSource)
-                        val approximater = MapTileApproximater().apply {
-                            addProvider(filesystemProvider)
+                    val file = DwdWmsClient.getCachedFrameFile(context, time)
+                    if (file.exists() && file.length() > 0) {
+                        bitmapCache.getOrPut(timeStr) {
+                            android.graphics.BitmapFactory.decodeFile(file.absolutePath)
                         }
-                        val downloader = MapTileDownloader(tileSource, tileWriter)
-                        val provider = MapTileProviderArray(tileSource, receiver, arrayOf(filesystemProvider, approximater, downloader))
-                        
-                        val overlay = TilesOverlay(provider, context).apply {
-                            loadingBackgroundColor = Color.TRANSPARENT
-                            loadingLineColor = Color.TRANSPARENT
-                        }
-                        Pair(overlay, provider)
+                    } else {
+                        null
                     }
-                    pair.first
                 }
 
-                // 2. Build the stable, desired overlays list: radar layers first (chronological order), then user location marker
+                // 2. Perform fallback logic: if current index is not ready, search backward then forward
+                var activeBitmap: android.graphics.Bitmap? = null
+                if (!isPreloading && activeFrameIndex in frameTimes.indices) {
+                    activeBitmap = currentFrameBitmaps[activeFrameIndex]
+                    if (activeBitmap == null) {
+                        // Search backward
+                        for (j in activeFrameIndex - 1 downTo 0) {
+                            if (currentFrameBitmaps[j] != null) {
+                                activeBitmap = currentFrameBitmaps[j]
+                                break
+                            }
+                        }
+                        // Search forward
+                        if (activeBitmap == null) {
+                            for (j in activeFrameIndex + 1 until frameTimes.size) {
+                                if (currentFrameBitmaps[j] != null) {
+                                    activeBitmap = currentFrameBitmaps[j]
+                                    break
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 3. Update overlay with the resolved bitmap
+                radarOverlay.bitmap = activeBitmap
+
+                // 4. Construct desired overlay list
                 val desiredOverlays = ArrayList<org.osmdroid.views.overlay.Overlay>()
-                desiredOverlays.addAll(currentFrameOverlays)
+                desiredOverlays.add(radarOverlay)
                 if (userLocation != null) {
                     userLocationMarker.position = userLocation
                     desiredOverlays.add(userLocationMarker)
                 }
 
-                // Apply desired overlays list to MapView only if there is a structure or order mismatch.
-                // This prevents resetting Osmdroid's internals or tile loaders during interactions.
+                // Sync view overlays list
                 var isMatch = view.overlays.size == desiredOverlays.size
                 if (isMatch) {
                     for (i in desiredOverlays.indices) {
@@ -206,31 +272,6 @@ fun RadarMapView(
                     view.overlays.addAll(desiredOverlays)
                 }
 
-                // 3. Define the active and previous indices for zero-flicker transitions
-                val visibleIndex = activeFrameIndex
-                val previousIndex = if (activeFrameIndex > 0) activeFrameIndex - 1 else -1
-
-                // 4. Update state properties (isEnabled, colorFilter) on all overlays based on preloading state
-                currentFrameOverlays.forEachIndexed { idx, overlay ->
-                    if (isPreloading) {
-                        // During preloading: enable all overlays so they actively download WMS tiles in the background
-                        overlay.isEnabled = true
-                        overlay.setColorFilter(transparentColorFilter) // Keep tiles invisible
-                    } else {
-                        // During playback/normal operation: only enable the current and previous overlays.
-                        // This gives 100% fluid GPU/CPU performance, completely removes orange block glitches,
-                        // and prevents grey shadow color build-up from stacked transparent layers.
-                        if (idx == visibleIndex || idx == previousIndex) {
-                            overlay.isEnabled = true
-                            overlay.setColorFilter(null) // Fully visible
-                        } else {
-                            overlay.isEnabled = false
-                            overlay.setColorFilter(null)
-                        }
-                    }
-                }
-
-                // Force view repaint
                 view.postInvalidate()
             }
         }
@@ -256,9 +297,7 @@ class LocationDotDrawable(context: Context) : Drawable() {
         interpolator = LinearInterpolator()
         addUpdateListener { animation ->
             val fraction = animation.animatedValue as Float
-            // Halo expands from minHaloRadius to maxHaloRadius
             haloRadius = minHaloRadius + (maxHaloRadius - minHaloRadius) * fraction
-            // Halo fades out as it expands
             haloAlpha = 0.25f * (1f - fraction)
             invalidateSelf()
         }
@@ -273,22 +312,18 @@ class LocationDotDrawable(context: Context) : Drawable() {
         val cx = bounds.exactCenterX()
         val cy = bounds.exactCenterY()
         
-        // 1. Draw pulsing outer halo (semi-transparent blue)
         paint.color = 0xFF3B82F6.toInt()
         paint.alpha = (haloAlpha * 255).toInt()
         paint.style = Paint.Style.FILL
         canvas.drawCircle(cx, cy, haloRadius, paint)
         
-        // 2. Draw subtle shadow under the white border
-        paint.color = 0x44000000 // 27% black
+        paint.color = 0x44000000
         paint.alpha = 255
         canvas.drawCircle(cx, cy + 1.5f * density, borderRadius + 0.5f * density, paint)
         
-        // 3. Draw white border
         paint.color = 0xFFFFFFFF.toInt()
         canvas.drawCircle(cx, cy, borderRadius, paint)
         
-        // 4. Draw blue core
         paint.color = 0xFF3B82F6.toInt()
         canvas.drawCircle(cx, cy, coreRadius, paint)
     }
