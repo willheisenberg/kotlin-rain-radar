@@ -16,7 +16,7 @@ class RadarViewModel : ViewModel() {
     private val _frameTimes = MutableStateFlow<List<Instant>>(emptyList())
     val frameTimes: StateFlow<List<Instant>> = _frameTimes.asStateFlow()
 
-    private val _activeFrameIndex = MutableStateFlow(35) // Start at index 35 (the current live frame)
+    private val _activeFrameIndex = MutableStateFlow(36) // Start at index 36 (the current live frame, wie KDE Extension)
     val activeFrameIndex: StateFlow<Int> = _activeFrameIndex.asStateFlow()
 
     private val _isPlaying = MutableStateFlow(false)
@@ -47,7 +47,7 @@ class RadarViewModel : ViewModel() {
 
         val times = DwdWmsClient.generateCombinedFrameTimes()
         _frameTimes.value = times
-        _activeFrameIndex.value = 35 // Reset to the current live frame
+        _activeFrameIndex.value = 36 // Reset to the current live frame (Index 36 = "Jetzt")
 
         if (context == null && appContext == null) {
             _isPreloading.value = false
@@ -150,7 +150,7 @@ class RadarViewModel : ViewModel() {
                 delay(30000) // 30 seconds
                 val times = _frameTimes.value
                 if (times.size >= 60) {
-                    val currentBaseTime = times[35]
+                    val currentBaseTime = times[36]
                     
                     // Calculate what the baseTime should be right now
                     val now = Instant.now()

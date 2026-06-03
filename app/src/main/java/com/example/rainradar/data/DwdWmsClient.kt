@@ -30,29 +30,34 @@ object DwdWmsClient {
     private fun getRoundedBaseTime(): Instant {
         val now = Instant.now()
         val epochSec = now.epochSecond
-        // Deduct 10 minutes (600 seconds) safety offset before rounding to 5-minute (300 seconds) interval
+        // 10-Minuten Safety-Offset (600s) – identisch mit der KDE Plasma Extension
+        // Verhindert, dass Frames angefragt werden, bevor der DWD sie bereitstellt
         val roundedSec = ((epochSec - 600) / 300) * 300
         return Instant.ofEpochSecond(roundedSec)
     }
 
     /**
      * Generates a unified list of 60 frame times (Instants):
-     * - 36 past frames (indices 0 to 35, where 35 is the base current time)
-     * - 24 forecast frames (indices 36 to 59, starting at base + 5 min)
+     * - 36 past frames (indices 0 to 35): base - (36-i)*5min  → Frame 35 = base - 5min
+     * - 24 future frames (indices 36 to 59): base + (i-36)*5min → Frame 36 = base (="Jetzt")
+     * Identisch mit der KDE Plasma Extension Logik
      */
     fun generateCombinedFrameTimes(): List<Instant> {
         val base = getRoundedBaseTime()
         val list = ArrayList<Instant>(60)
         
-        // 36 past frames (from base - 35*5m up to base)
-        for (i in 0 until 36) {
-            val instant = base.minusSeconds((35 - i) * 5 * 60L)
-            list.add(instant)
-        }
+        val pastFrames = 36
+        val totalFrames = 60
         
-        // 24 forecast frames (from base + 1*5m up to base + 24*5m)
-        for (i in 1..24) {
-            val instant = base.plusSeconds(i * 5 * 60L)
+        for (i in 0 until totalFrames) {
+            val instant = if (i < pastFrames) {
+                // Vergangene Frames: base - (pastFrames - i) * 5min
+                base.minusSeconds((pastFrames - i) * 5 * 60L)
+            } else {
+                // Vorhersage-Frames: base + (i - pastFrames) * 5min
+                // Frame 36 = base + 0 = "Jetzt"
+                base.plusSeconds((i - pastFrames) * 5 * 60L)
+            }
             list.add(instant)
         }
         
