@@ -96,15 +96,8 @@ fun RadarMapView(
     }
 
     // Keep memory cache of bitmaps to avoid decoding them repeatedly on draw
-    val bitmapCache = remember { HashMap<String, android.graphics.Bitmap>() }
-
-    // Clear bitmap cache and recycle old bitmaps when frameTimes change
-    DisposableEffect(frameTimes) {
-        onDispose {
-            bitmapCache.values.forEach { it.recycle() }
-            bitmapCache.clear()
-        }
-    }
+    // Verwende nullable Bitmap um null-Rückgaben von decodeFile sicher zu handhaben
+    val bitmapCache = remember { HashMap<String, android.graphics.Bitmap?>() }
 
     val mapView = remember {
         MapView(context).apply {
@@ -199,6 +192,9 @@ fun RadarMapView(
         onMapReady(mapView)
         onDispose {
             locationDrawable.stopAnimation()
+            // Alle Bitmaps sicher recyclen beim Aufräumen
+            bitmapCache.values.forEach { it?.recycle() }
+            bitmapCache.clear()
             mapView.onDetach()
         }
     }
@@ -208,36 +204,71 @@ fun RadarMapView(
         modifier = modifier,
         update = { view ->
             if (frameTimes.isNotEmpty()) {
-                // 1. Decode/fetch bitmaps from cache/disk
+                // BitmapFactory-Options mit inSampleSize=2 um Speicher zu halbieren
+                val decodeOpts = android.graphics.BitmapFactory.Options().apply {
+                    inSampleSize = 2
+                }
+
+                // 1. Aktuelle Zeitstempel-Keys sammeln
+                val currentTimeKeys = HashSet<String>(frameTimes.size)
+
+                // 2. Decode/fetch bitmaps from cache/disk (null-safe)
                 val currentFrameBitmaps = frameTimes.map { time ->
                     val timeStr = DwdWmsClient.formatIsoTime(time)
+                    currentTimeKeys.add(timeStr)
                     val file = DwdWmsClient.getCachedFrameFile(context, time)
                     if (file.exists() && file.length() > 0) {
-                        bitmapCache.getOrPut(timeStr) {
-                            android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+                        // Prüfe ob bereits im Cache (auch null-Einträge beachten)
+                        if (bitmapCache.containsKey(timeStr)) {
+                            val cached = bitmapCache[timeStr]
+                            // Recyclete Bitmaps erneut laden
+                            if (cached != null && !cached.isRecycled) {
+                                cached
+                            } else {
+                                val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
+                                bitmapCache[timeStr] = decoded
+                                decoded
+                            }
+                        } else {
+                            val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
+                            bitmapCache[timeStr] = decoded
+                            decoded
                         }
                     } else {
                         null
                     }
                 }
 
-                // 2. Perform fallback logic: if current index is not ready, search backward then forward
+                // 3. Alte Bitmaps sicher aufräumen (nur die, die nicht mehr gebraucht werden)
+                val keysToRemove = bitmapCache.keys.filter { it !in currentTimeKeys }
+                for (key in keysToRemove) {
+                    bitmapCache.remove(key)?.let { bmp ->
+                        if (!bmp.isRecycled) bmp.recycle()
+                    }
+                }
+
+                // 4. Perform fallback logic: if current index is not ready, search backward then forward
                 var activeBitmap: android.graphics.Bitmap? = null
                 if (!isPreloading && activeFrameIndex in frameTimes.indices) {
                     activeBitmap = currentFrameBitmaps[activeFrameIndex]
+                    // Sicherstellen, dass das Bitmap nicht recycled ist
+                    if (activeBitmap != null && activeBitmap.isRecycled) activeBitmap = null
+
                     if (activeBitmap == null) {
                         // Search backward
                         for (j in activeFrameIndex - 1 downTo 0) {
-                            if (currentFrameBitmaps[j] != null) {
-                                activeBitmap = currentFrameBitmaps[j]
+                            val bmp = currentFrameBitmaps[j]
+                            if (bmp != null && !bmp.isRecycled) {
+                                activeBitmap = bmp
                                 break
                             }
                         }
                         // Search forward
                         if (activeBitmap == null) {
                             for (j in activeFrameIndex + 1 until frameTimes.size) {
-                                if (currentFrameBitmaps[j] != null) {
-                                    activeBitmap = currentFrameBitmaps[j]
+                                val bmp = currentFrameBitmaps[j]
+                                if (bmp != null && !bmp.isRecycled) {
+                                    activeBitmap = bmp
                                     break
                                 }
                             }
@@ -245,10 +276,10 @@ fun RadarMapView(
                     }
                 }
 
-                // 3. Update overlay with the resolved bitmap
+                // 5. Update overlay with the resolved bitmap
                 radarOverlay.bitmap = activeBitmap
 
-                // 4. Construct desired overlay list
+                // 6. Construct desired overlay list
                 val desiredOverlays = ArrayList<org.osmdroid.views.overlay.Overlay>()
                 desiredOverlays.add(radarOverlay)
                 if (userLocation != null) {

@@ -38,7 +38,7 @@ class RadarViewModel : ViewModel() {
         startAutoRefreshPolling()
     }
 
-    fun refreshData(context: Context? = null) {
+    fun refreshData(context: Context? = null, silent: Boolean = false) {
         if (context != null && appContext == null) {
             appContext = context.applicationContext
         }
@@ -57,8 +57,11 @@ class RadarViewModel : ViewModel() {
         
         val activeContext = context ?: appContext ?: return
 
-        _isPreloading.value = true
-        _preloadProgress.value = 0f
+        // Nur bei manuellem Refresh den Ladebalken anzeigen
+        if (!silent) {
+            _isPreloading.value = true
+            _preloadProgress.value = 0f
+        }
 
         // Launch preloader job on background IO threads
         preloadJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -76,7 +79,9 @@ class RadarViewModel : ViewModel() {
                         semaphore.release()
                         synchronized(this@RadarViewModel) {
                             completed++
-                            _preloadProgress.value = completed.toFloat() / total
+                            if (!silent) {
+                                _preloadProgress.value = completed.toFloat() / total
+                            }
                         }
                     }
                 }
@@ -85,8 +90,10 @@ class RadarViewModel : ViewModel() {
             // Wait for all downloads to finish or time out
             jobs.forEach { it.join() }
             
-            _isPreloading.value = false
-            _preloadProgress.value = 1f
+            if (!silent) {
+                _isPreloading.value = false
+                _preloadProgress.value = 1f
+            }
         }
     }
 
@@ -152,8 +159,8 @@ class RadarViewModel : ViewModel() {
                     val expectedBaseTime = Instant.ofEpochSecond(roundedSec)
                     
                     if (expectedBaseTime != currentBaseTime) {
-                        // A new frame is available! Trigger refresh
-                        refreshData(appContext)
+                        // Ein neues Frame ist verfügbar! Stiller Refresh ohne Ladebalken
+                        refreshData(appContext, silent = true)
                     }
                 }
             }
