@@ -23,9 +23,13 @@ import android.graphics.drawable.Drawable
 class RadarBboxOverlay : org.osmdroid.views.overlay.Overlay() {
     var bitmap: android.graphics.Bitmap? = null
 
+    // Bilinear-Filter für weiche Skalierung statt Nearest-Neighbor (blockig)
+    private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+
     override fun draw(canvas: Canvas, mapView: MapView, shadow: Boolean) {
         if (shadow) return
         val bmp = bitmap ?: return
+        if (bmp.isRecycled) return
 
         val projection = mapView.projection
         val nwPoint = android.graphics.Point()
@@ -42,7 +46,7 @@ class RadarBboxOverlay : org.osmdroid.views.overlay.Overlay() {
         val bottom = sePoint.y
 
         val destRect = android.graphics.Rect(left, top, right, bottom)
-        canvas.drawBitmap(bmp, null, destRect, null)
+        canvas.drawBitmap(bmp, null, destRect, bitmapPaint)
     }
 }
 
@@ -204,35 +208,41 @@ fun RadarMapView(
         modifier = modifier,
         update = { view ->
             if (frameTimes.isNotEmpty()) {
-                // BitmapFactory-Options mit inSampleSize=2 um Speicher zu halbieren
-                val decodeOpts = android.graphics.BitmapFactory.Options().apply {
-                    inSampleSize = 2
-                }
-
                 // 1. Aktuelle Zeitstempel-Keys sammeln
                 val currentTimeKeys = HashSet<String>(frameTimes.size)
 
-                // 2. Decode/fetch bitmaps from cache/disk (null-safe)
+                // 2. Decode/fetch bitmaps from cache/disk (null-safe, OOM-geschützt)
+                // inSampleSize=2 halbiert die Bitmap-Größe im RAM bei doppelter WMS-Auflösung
+                // → gleiches RAM wie vorher, aber bessere Quelldaten + Bilinear-Filter = schärfer
+                val decodeOpts = android.graphics.BitmapFactory.Options().apply {
+                    inSampleSize = 2
+                }
                 val currentFrameBitmaps = frameTimes.map { time ->
                     val timeStr = DwdWmsClient.formatIsoTime(time)
                     currentTimeKeys.add(timeStr)
                     val file = DwdWmsClient.getCachedFrameFile(context, time)
                     if (file.exists() && file.length() > 0) {
-                        // Prüfe ob bereits im Cache (auch null-Einträge beachten)
-                        if (bitmapCache.containsKey(timeStr)) {
-                            val cached = bitmapCache[timeStr]
-                            // Recyclete Bitmaps erneut laden
-                            if (cached != null && !cached.isRecycled) {
-                                cached
-                            } else {
+                        // Prüfe ob bereits im Cache
+                        val cached = bitmapCache[timeStr]
+                        if (cached != null && !cached.isRecycled) {
+                            cached
+                        } else {
+                            // Decode mit OOM-Schutz
+                            try {
                                 val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
                                 bitmapCache[timeStr] = decoded
                                 decoded
+                            } catch (e: OutOfMemoryError) {
+                                // Bei Speichermangel: alte nicht benötigte Bitmaps freigeben
+                                bitmapCache.entries.removeAll { (key, bmp) ->
+                                    if (key !in currentTimeKeys) {
+                                        bmp?.let { if (!it.isRecycled) it.recycle() }
+                                        true
+                                    } else false
+                                }
+                                System.gc()
+                                null
                             }
-                        } else {
-                            val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
-                            bitmapCache[timeStr] = decoded
-                            decoded
                         }
                     } else {
                         null

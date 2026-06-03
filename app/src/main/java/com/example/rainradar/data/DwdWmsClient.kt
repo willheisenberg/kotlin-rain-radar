@@ -62,7 +62,7 @@ object DwdWmsClient {
     /**
      * Generates a WMS query URL for the full DWD bounding box.
      */
-    fun getBBoxWmsUrl(time: Instant, width: Int = 1000, height: Int = 1085): String {
+    fun getBBoxWmsUrl(time: Instant, width: Int = 1920, height: Int = 2084): String {
         val timeStr = formatIsoTime(time)
         val bbox = "222638.98,5621521.49,2115070.32,7673967.65"
         return "$WMS_BASE_URL?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap" +
