@@ -117,34 +117,46 @@ object DwdWmsClient {
             .header("User-Agent", "DwdRainRadarApp")
             .build()
 
-        try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return false
-                }
-                val body = response.body ?: return false
-                val tempFile = File.createTempFile("radar_temp_", ".tmp", context.cacheDir)
-                try {
-                    tempFile.outputStream().use { output ->
-                        body.byteStream().copyTo(output)
+        val maxAttempts = 3
+        for (attempt in 1..maxAttempts) {
+            try {
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        throw IOException("Unexpected HTTP code $response")
                     }
-                    if (tempFile.exists() && tempFile.length() > 0) {
-                        if (tempFile.renameTo(file)) {
-                            return true
-                        } else {
-                            tempFile.copyTo(file, overwrite = true)
+                    val body = response.body ?: throw IOException("Empty response body")
+                    val tempFile = File.createTempFile("radar_temp_", ".tmp", context.cacheDir)
+                    try {
+                        tempFile.outputStream().use { output ->
+                            body.byteStream().copyTo(output)
+                        }
+                        if (tempFile.exists() && tempFile.length() > 0) {
+                            val success = if (tempFile.renameTo(file)) {
+                                true
+                            } else {
+                                tempFile.copyTo(file, overwrite = true)
+                                tempFile.delete()
+                                true
+                            }
+                            if (success) return true
+                        }
+                    } finally {
+                        if (tempFile.exists()) {
                             tempFile.delete()
-                            return true
                         }
                     }
-                } finally {
-                    if (tempFile.exists()) {
-                        tempFile.delete()
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DwdWmsClient", "Download failed for $time (Attempt $attempt/$maxAttempts): ${e.message}")
+                if (attempt < maxAttempts) {
+                    try {
+                        Thread.sleep(1500L * attempt) // Exponential backoff
+                    } catch (ie: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        break
                     }
                 }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
         }
         return false
     }
