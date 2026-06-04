@@ -28,6 +28,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -68,9 +72,19 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
 
     val preloadProgress by viewModel.preloadProgress.collectAsState()
 
-    // Refresh and preload frames on launch
-    LaunchedEffect(Unit) {
-        viewModel.refreshData(context)
+    // Observe App Lifecycle and reset to Now on ON_RESUME
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshData(context, silent = true)
+                viewModel.setActiveFrameIndex(36)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     var userLocation by remember { mutableStateOf<GeoPoint?>(null) }
@@ -236,9 +250,32 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                     )
                 }
                 Spacer(modifier = Modifier.weight(1f))
+
+                // Jetzt button
+                Box(
+                    modifier = Modifier
+                        .height(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isPreloading) SurfaceBg.copy(alpha = 0.5f) else SurfaceBg)
+                        .border(1.dp, BorderColor, RoundedCornerShape(8.dp))
+                        .clickable(enabled = !isPreloading) {
+                            viewModel.setActiveFrameIndex(36)
+                        }
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Jetzt",
+                        color = if (isPreloading) TextSecondary else TextPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
                 
                 IconButton(
-                    onClick = { viewModel.refreshData(context) },
+                    onClick = { viewModel.refreshData(context, force = true) },
                     modifier = Modifier.size(32.dp)
                 ) {
                     Icon(

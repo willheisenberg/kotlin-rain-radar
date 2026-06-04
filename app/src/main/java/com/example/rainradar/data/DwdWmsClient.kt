@@ -127,9 +127,9 @@ object DwdWmsClient {
      * Downloads the WMS image for a given timestamp and caches it.
      * Uses a temp file during download to avoid saving incomplete/corrupt files.
      */
-    fun downloadFrame(context: Context, time: Instant, base: Instant = getRoundedBaseTime()): Boolean {
+    fun downloadFrame(context: Context, time: Instant, base: Instant = getRoundedBaseTime(), force: Boolean = false): Boolean {
         val file = getCachedFrameFile(context, time, base)
-        if (file.exists() && file.length() > 0) {
+        if (!force && file.exists() && file.length() > 0) {
             return true
         }
 

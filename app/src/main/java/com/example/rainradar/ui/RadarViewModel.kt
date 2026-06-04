@@ -38,24 +38,58 @@ class RadarViewModel : ViewModel() {
         startAutoRefreshPolling()
     }
 
-    fun refreshData(context: Context? = null, silent: Boolean = false) {
+    private var isFirstRefreshDone = false
+
+    fun refreshData(context: Context? = null, silent: Boolean = false, force: Boolean = false) {
         if (context != null && appContext == null) {
             appContext = context.applicationContext
         }
-        if (!silent) {
-            stopPlayback()
-        }
-        preloadJob?.cancel()
-
+        
         val oldTimes = _frameTimes.value
         val activeIndex = _activeFrameIndex.value
         val activeTime = oldTimes.getOrNull(activeIndex)
+
+        val activeContextForCache = context ?: appContext
+        if (force && activeContextForCache != null) {
+            val dir = java.io.File(activeContextForCache.cacheDir, "radar_cache")
+            if (dir.exists() && dir.isDirectory) {
+                dir.listFiles()?.forEach { it.delete() }
+            }
+        }
 
         val base = DwdWmsClient.getRoundedBaseTime()
         val times = DwdWmsClient.generateCombinedFrameTimes(base)
         _frameTimes.value = times
 
-        if (activeTime != null) {
+        // Check if the cache is empty (e.g. fresh install, cleared cache, or force refresh)
+        var cachedCount = 0
+        if (activeContextForCache != null) {
+            times.forEach { time ->
+                val file = DwdWmsClient.getCachedFrameFile(activeContextForCache, time, base)
+                if (file.exists() && file.length() > 0) {
+                    cachedCount++
+                }
+            }
+        }
+
+        val isFirst = !isFirstRefreshDone && context != null
+        if (isFirst) {
+            isFirstRefreshDone = true
+        }
+
+        // If less than 45 frames are cached (e.g. after hours of inactivity or if cache was cleared), 
+        // we show the preloading screen to avoid staring at a blank map during longer downloads.
+        val isCacheInsufficient = (activeContextForCache != null && cachedCount < 45)
+        val effectiveSilent = if (isFirst || isCacheInsufficient) false else silent
+
+        if (!effectiveSilent || force) {
+            stopPlayback()
+        }
+        preloadJob?.cancel()
+
+        if (force) {
+            _activeFrameIndex.value = 36
+        } else if (activeTime != null) {
             val newIndex = times.indexOf(activeTime)
             if (newIndex != -1) {
                 _activeFrameIndex.value = newIndex
@@ -78,7 +112,7 @@ class RadarViewModel : ViewModel() {
         DwdWmsClient.cleanOldForecastCache(activeContext, base)
 
         // Nur bei manuellem Refresh den Ladebalken anzeigen
-        if (!silent) {
+        if (!effectiveSilent || force) {
             _isPreloading.value = true
             _preloadProgress.value = 0f
         }
@@ -94,12 +128,12 @@ class RadarViewModel : ViewModel() {
                 launch {
                     semaphore.acquire()
                     try {
-                        DwdWmsClient.downloadFrame(activeContext, time, base)
+                        DwdWmsClient.downloadFrame(activeContext, time, base, force = force)
                     } finally {
                         semaphore.release()
                         synchronized(this@RadarViewModel) {
                             completed++
-                            if (!silent) {
+                            if (!effectiveSilent) {
                                 _preloadProgress.value = completed.toFloat() / total
                             }
                         }
@@ -110,7 +144,7 @@ class RadarViewModel : ViewModel() {
             // Wait for all downloads to finish or time out
             jobs.forEach { it.join() }
             
-            if (!silent) {
+            if (!effectiveSilent) {
                 _isPreloading.value = false
                 _preloadProgress.value = 1f
             }
