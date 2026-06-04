@@ -42,12 +42,28 @@ class RadarViewModel : ViewModel() {
         if (context != null && appContext == null) {
             appContext = context.applicationContext
         }
-        stopPlayback()
+        if (!silent) {
+            stopPlayback()
+        }
         preloadJob?.cancel()
+
+        val oldTimes = _frameTimes.value
+        val activeIndex = _activeFrameIndex.value
+        val activeTime = oldTimes.getOrNull(activeIndex)
 
         val times = DwdWmsClient.generateCombinedFrameTimes()
         _frameTimes.value = times
-        _activeFrameIndex.value = 36 // Reset to the current live frame (Index 36 = "Jetzt")
+
+        if (activeTime != null) {
+            val newIndex = times.indexOf(activeTime)
+            if (newIndex != -1) {
+                _activeFrameIndex.value = newIndex
+            } else {
+                _activeFrameIndex.value = 36
+            }
+        } else {
+            _activeFrameIndex.value = 36
+        }
 
         if (context == null && appContext == null) {
             _isPreloading.value = false
