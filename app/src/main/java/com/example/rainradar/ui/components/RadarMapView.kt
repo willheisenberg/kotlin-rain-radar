@@ -72,6 +72,51 @@ private fun calculateMinZoom(mapWidth: Int, mapHeight: Int): Double {
     return maxOf(3.0, minZoom)
 }
 
+private fun cleanRadarBitmap(bitmap: android.graphics.Bitmap) {
+    val width = bitmap.width
+    val height = bitmap.height
+    val pixels = IntArray(width * height)
+    bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+    
+    var modified = false
+    for (i in pixels.indices) {
+        val color = pixels[i]
+        val a = (color shr 24) and 0xFF
+        if (a == 0) continue
+        
+        val r = (color shr 16) and 0xFF
+        val g = (color shr 8) and 0xFF
+        val b = color and 0xFF
+        
+        val rf = r / 255.0f
+        val gf = g / 255.0f
+        val bf = b / 255.0f
+        
+        // 1. Gray background: R ≈ G ≈ B (within 0.03 of each other)
+        val isGray = (Math.abs(rf - gf) <= 0.03f && 
+                      Math.abs(rf - bf) <= 0.03f && 
+                      Math.abs(gf - bf) <= 0.03f)
+                      
+        // 2. Pink/magenta border detection
+        val minRB = minOf(rf, bf)
+        val isPink = (Math.abs(rf - bf) <= 0.19f) && 
+                     (minRB > 0.01f) && 
+                     (gf < minRB - 0.02f)
+                     
+        // 3. Blended boundary check
+        val isBlend = (minRB > 0.3f) && (gf > 0.05f)
+        
+        if (isGray || isPink || isBlend) {
+            pixels[i] = 0 // Transparent
+            modified = true
+        }
+    }
+    
+    if (modified && bitmap.isMutable) {
+        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+    }
+}
+
 @Composable
 fun RadarMapView(
     frameTimes: List<Instant>,
@@ -216,6 +261,7 @@ fun RadarMapView(
                 // → gleiches RAM wie vorher, aber bessere Quelldaten + Bilinear-Filter = schärfer
                 val decodeOpts = android.graphics.BitmapFactory.Options().apply {
                     inSampleSize = 2
+                    inMutable = true
                 }
                 val currentFrameBitmaps = frameTimes.map { time ->
                     val timeStr = DwdWmsClient.formatIsoTime(time)
@@ -230,6 +276,9 @@ fun RadarMapView(
                             // Decode mit OOM-Schutz
                             try {
                                 val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
+                                if (decoded != null) {
+                                    cleanRadarBitmap(decoded)
+                                }
                                 bitmapCache[timeStr] = decoded
                                 decoded
                             } catch (e: OutOfMemoryError) {
