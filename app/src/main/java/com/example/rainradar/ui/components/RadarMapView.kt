@@ -160,17 +160,19 @@ fun RadarMapView(
             return@LaunchedEffect
         }
         
+        val base = frameTimes.getOrNull(36) ?: DwdWmsClient.getRoundedBaseTime()
+
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             // 1. Find the best frame index to show (fallback logic)
             var targetIndex = -1
             if (activeFrameIndex in frameTimes.indices) {
-                val file = DwdWmsClient.getCachedFrameFile(context, frameTimes[activeFrameIndex])
+                val file = DwdWmsClient.getCachedFrameFile(context, frameTimes[activeFrameIndex], base)
                 if (file.exists() && file.length() > 0) {
                     targetIndex = activeFrameIndex
                 } else {
                     // Search backward
                     for (j in activeFrameIndex - 1 downTo 0) {
-                        val f = DwdWmsClient.getCachedFrameFile(context, frameTimes[j])
+                        val f = DwdWmsClient.getCachedFrameFile(context, frameTimes[j], base)
                         if (f.exists() && f.length() > 0) {
                             targetIndex = j
                             break
@@ -179,7 +181,7 @@ fun RadarMapView(
                     // Search forward
                     if (targetIndex == -1) {
                         for (j in activeFrameIndex + 1 until frameTimes.size) {
-                            val f = DwdWmsClient.getCachedFrameFile(context, frameTimes[j])
+                            val f = DwdWmsClient.getCachedFrameFile(context, frameTimes[j], base)
                             if (f.exists() && f.length() > 0) {
                                 targetIndex = j
                                 break
@@ -205,7 +207,7 @@ fun RadarMapView(
             }
 
             // 3. Decode & Clean in background
-            val file = DwdWmsClient.getCachedFrameFile(context, targetTime)
+            val file = DwdWmsClient.getCachedFrameFile(context, targetTime, base)
             val decodeOpts = android.graphics.BitmapFactory.Options().apply {
                 inSampleSize = 2
                 inMutable = true

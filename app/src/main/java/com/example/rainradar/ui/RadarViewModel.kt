@@ -51,7 +51,8 @@ class RadarViewModel : ViewModel() {
         val activeIndex = _activeFrameIndex.value
         val activeTime = oldTimes.getOrNull(activeIndex)
 
-        val times = DwdWmsClient.generateCombinedFrameTimes()
+        val base = DwdWmsClient.getRoundedBaseTime()
+        val times = DwdWmsClient.generateCombinedFrameTimes(base)
         _frameTimes.value = times
 
         if (activeTime != null) {
@@ -73,6 +74,9 @@ class RadarViewModel : ViewModel() {
         
         val activeContext = context ?: appContext ?: return
 
+        // Clean up old forecast cache files
+        DwdWmsClient.cleanOldForecastCache(activeContext, base)
+
         // Nur bei manuellem Refresh den Ladebalken anzeigen
         if (!silent) {
             _isPreloading.value = true
@@ -90,7 +94,7 @@ class RadarViewModel : ViewModel() {
                 launch {
                     semaphore.acquire()
                     try {
-                        DwdWmsClient.downloadFrame(activeContext, time)
+                        DwdWmsClient.downloadFrame(activeContext, time, base)
                     } finally {
                         semaphore.release()
                         synchronized(this@RadarViewModel) {

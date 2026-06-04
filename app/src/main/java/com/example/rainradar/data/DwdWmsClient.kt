@@ -27,7 +27,7 @@ object DwdWmsClient {
         return isoFormatter.format(instant)
     }
 
-    private fun getRoundedBaseTime(): Instant {
+    fun getRoundedBaseTime(): Instant {
         val now = Instant.now()
         val epochSec = now.epochSecond
         // 10-Minuten Safety-Offset (600s) – identisch mit der KDE Plasma Extension
@@ -42,8 +42,7 @@ object DwdWmsClient {
      * - 24 future frames (indices 36 to 59): base + (i-36)*5min → Frame 36 = base (="Jetzt")
      * Identisch mit der KDE Plasma Extension Logik
      */
-    fun generateCombinedFrameTimes(): List<Instant> {
-        val base = getRoundedBaseTime()
+    fun generateCombinedFrameTimes(base: Instant = getRoundedBaseTime()): List<Instant> {
         val list = ArrayList<Instant>(60)
         
         val pastFrames = 36
@@ -67,9 +66,10 @@ object DwdWmsClient {
     /**
      * Generates a WMS query URL for the full DWD bounding box.
      */
-    fun getBBoxWmsUrl(time: Instant, width: Int = 1920, height: Int = 2084): String {
+    fun getBBoxWmsUrl(time: Instant, base: Instant = getRoundedBaseTime(), width: Int = 1920, height: Int = 2084): String {
         val timeStr = formatIsoTime(time)
         val bbox = "222638.98,5621521.49,2115070.32,7673967.65"
+        val cb = if (time.epochSecond >= base.epochSecond) base.epochSecond else 0L
         return "$WMS_BASE_URL?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap" +
                 "&LAYERS=$WMS_LAYER" +
                 "&STYLES=" +
@@ -78,40 +78,62 @@ object DwdWmsClient {
                 "&WIDTH=$width&HEIGHT=$height" +
                 "&FORMAT=image/png" +
                 "&TRANSPARENT=TRUE" +
-                "&TIME=$timeStr"
+                "&TIME=$timeStr" +
+                "&_cb=$cb"
     }
 
     /**
      * Resolves the local cache file path for a frame.
      */
-    fun getCachedFrameFile(context: Context, time: Instant): File {
+    fun getCachedFrameFile(context: Context, time: Instant, base: Instant = getRoundedBaseTime()): File {
         val dir = File(context.cacheDir, "radar_cache")
         if (!dir.exists()) {
             dir.mkdirs()
         }
         val timeStr = formatIsoTime(time)
-        return File(dir, "frame_$timeStr.png")
+        return if (time.epochSecond >= base.epochSecond) {
+            val baseStr = formatIsoTime(base)
+            File(dir, "frame_${timeStr}_base_${baseStr}.png")
+        } else {
+            File(dir, "frame_$timeStr.png")
+        }
     }
 
     /**
      * Returns true if the frame image file is successfully downloaded and cached.
      */
-    fun isFrameReady(context: Context, time: Instant): Boolean {
-        val file = getCachedFrameFile(context, time)
+    fun isFrameReady(context: Context, time: Instant, base: Instant = getRoundedBaseTime()): Boolean {
+        val file = getCachedFrameFile(context, time, base)
         return file.exists() && file.length() > 0
+    }
+
+    /**
+     * Cleans up old forecast cache files whose base time is different from the current base time.
+     */
+    fun cleanOldForecastCache(context: Context, currentBase: Instant) {
+        val dir = File(context.cacheDir, "radar_cache")
+        if (dir.exists() && dir.isDirectory) {
+            val currentBaseStr = formatIsoTime(currentBase)
+            val files = dir.listFiles() ?: return
+            for (file in files) {
+                if (file.name.contains("_base_") && !file.name.contains("_base_$currentBaseStr")) {
+                    file.delete()
+                }
+            }
+        }
     }
 
     /**
      * Downloads the WMS image for a given timestamp and caches it.
      * Uses a temp file during download to avoid saving incomplete/corrupt files.
      */
-    fun downloadFrame(context: Context, time: Instant): Boolean {
-        val file = getCachedFrameFile(context, time)
+    fun downloadFrame(context: Context, time: Instant, base: Instant = getRoundedBaseTime()): Boolean {
+        val file = getCachedFrameFile(context, time, base)
         if (file.exists() && file.length() > 0) {
             return true
         }
 
-        val url = getBBoxWmsUrl(time)
+        val url = getBBoxWmsUrl(time, base)
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", "DwdRainRadarApp")
