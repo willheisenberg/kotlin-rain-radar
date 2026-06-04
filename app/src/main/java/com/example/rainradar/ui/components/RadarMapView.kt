@@ -3,6 +3,10 @@ package com.example.rainradar.ui.components
 import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
@@ -148,6 +152,110 @@ fun RadarMapView(
     // Verwende nullable Bitmap um null-Rückgaben von decodeFile sicher zu handhaben
     val bitmapCache = remember { HashMap<String, android.graphics.Bitmap?>() }
 
+    var activeBitmapState by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+
+    LaunchedEffect(activeFrameIndex, frameTimes, isPreloading) {
+        if (isPreloading || frameTimes.isEmpty()) {
+            activeBitmapState = null
+            return@LaunchedEffect
+        }
+        
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            // 1. Find the best frame index to show (fallback logic)
+            var targetIndex = -1
+            if (activeFrameIndex in frameTimes.indices) {
+                val file = DwdWmsClient.getCachedFrameFile(context, frameTimes[activeFrameIndex])
+                if (file.exists() && file.length() > 0) {
+                    targetIndex = activeFrameIndex
+                } else {
+                    // Search backward
+                    for (j in activeFrameIndex - 1 downTo 0) {
+                        val f = DwdWmsClient.getCachedFrameFile(context, frameTimes[j])
+                        if (f.exists() && f.length() > 0) {
+                            targetIndex = j
+                            break
+                        }
+                    }
+                    // Search forward
+                    if (targetIndex == -1) {
+                        for (j in activeFrameIndex + 1 until frameTimes.size) {
+                            val f = DwdWmsClient.getCachedFrameFile(context, frameTimes[j])
+                            if (f.exists() && f.length() > 0) {
+                                targetIndex = j
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (targetIndex == -1) {
+                activeBitmapState = null
+                return@withContext
+            }
+
+            val targetTime = frameTimes[targetIndex]
+            val timeStr = DwdWmsClient.formatIsoTime(targetTime)
+            
+            // 2. Check memory cache
+            val cached = bitmapCache[timeStr]
+            if (cached != null && !cached.isRecycled) {
+                activeBitmapState = cached
+                return@withContext
+            }
+
+            // 3. Decode & Clean in background
+            val file = DwdWmsClient.getCachedFrameFile(context, targetTime)
+            val decodeOpts = android.graphics.BitmapFactory.Options().apply {
+                inSampleSize = 2
+                inMutable = true
+            }
+
+            try {
+                val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
+                if (decoded != null) {
+                    cleanRadarBitmap(decoded)
+                }
+                bitmapCache[timeStr] = decoded
+                activeBitmapState = decoded
+            } catch (e: OutOfMemoryError) {
+                // Clear cache on OOM and retry
+                bitmapCache.values.forEach { it?.recycle() }
+                bitmapCache.clear()
+                System.gc()
+                
+                try {
+                    val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
+                    if (decoded != null) {
+                        cleanRadarBitmap(decoded)
+                    }
+                    bitmapCache[timeStr] = decoded
+                    activeBitmapState = decoded
+                } catch (e2: Throwable) {
+                    activeBitmapState = null
+                }
+            } catch (e: Exception) {
+                activeBitmapState = null
+            }
+
+            // Prune cache to keep only active and surrounding frames (OOM prevention)
+            val activeTimeKeys = HashSet<String>()
+            val radius = 5 // Keep 5 frames before and after the active frame
+            val startIdx = maxOf(0, targetIndex - radius)
+            val endIdx = minOf(frameTimes.size - 1, targetIndex + radius)
+            for (k in startIdx..endIdx) {
+                activeTimeKeys.add(DwdWmsClient.formatIsoTime(frameTimes[k]))
+            }
+
+            val keysToRemove = bitmapCache.keys.filter { it !in activeTimeKeys }
+            for (key in keysToRemove) {
+                bitmapCache.remove(key)?.let { bmp ->
+                    if (!bmp.isRecycled) bmp.recycle()
+                }
+            }
+        }
+    }
+
     val mapView = remember {
         MapView(context).apply {
             setMultiTouchControls(true)
@@ -252,118 +360,34 @@ fun RadarMapView(
         factory = { mapView },
         modifier = modifier,
         update = { view ->
-            if (frameTimes.isNotEmpty()) {
-                // 1. Aktuelle Zeitstempel-Keys sammeln
-                val currentTimeKeys = HashSet<String>(frameTimes.size)
+            // Update overlay with the resolved bitmap
+            radarOverlay.bitmap = activeBitmapState
 
-                // 2. Decode/fetch bitmaps from cache/disk (null-safe, OOM-geschützt)
-                // inSampleSize=2 halbiert die Bitmap-Größe im RAM bei doppelter WMS-Auflösung
-                // → gleiches RAM wie vorher, aber bessere Quelldaten + Bilinear-Filter = schärfer
-                val decodeOpts = android.graphics.BitmapFactory.Options().apply {
-                    inSampleSize = 2
-                    inMutable = true
-                }
-                val currentFrameBitmaps = frameTimes.map { time ->
-                    val timeStr = DwdWmsClient.formatIsoTime(time)
-                    currentTimeKeys.add(timeStr)
-                    val file = DwdWmsClient.getCachedFrameFile(context, time)
-                    if (file.exists() && file.length() > 0) {
-                        // Prüfe ob bereits im Cache
-                        val cached = bitmapCache[timeStr]
-                        if (cached != null && !cached.isRecycled) {
-                            cached
-                        } else {
-                            // Decode mit OOM-Schutz
-                            try {
-                                val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
-                                if (decoded != null) {
-                                    cleanRadarBitmap(decoded)
-                                }
-                                bitmapCache[timeStr] = decoded
-                                decoded
-                            } catch (e: OutOfMemoryError) {
-                                // Bei Speichermangel: alte nicht benötigte Bitmaps freigeben
-                                bitmapCache.entries.removeAll { (key, bmp) ->
-                                    if (key !in currentTimeKeys) {
-                                        bmp?.let { if (!it.isRecycled) it.recycle() }
-                                        true
-                                    } else false
-                                }
-                                System.gc()
-                                null
-                            }
-                        }
-                    } else {
-                        null
-                    }
-                }
-
-                // 3. Alte Bitmaps sicher aufräumen (nur die, die nicht mehr gebraucht werden)
-                val keysToRemove = bitmapCache.keys.filter { it !in currentTimeKeys }
-                for (key in keysToRemove) {
-                    bitmapCache.remove(key)?.let { bmp ->
-                        if (!bmp.isRecycled) bmp.recycle()
-                    }
-                }
-
-                // 4. Perform fallback logic: if current index is not ready, search backward then forward
-                var activeBitmap: android.graphics.Bitmap? = null
-                if (!isPreloading && activeFrameIndex in frameTimes.indices) {
-                    activeBitmap = currentFrameBitmaps[activeFrameIndex]
-                    // Sicherstellen, dass das Bitmap nicht recycled ist
-                    if (activeBitmap != null && activeBitmap.isRecycled) activeBitmap = null
-
-                    if (activeBitmap == null) {
-                        // Search backward
-                        for (j in activeFrameIndex - 1 downTo 0) {
-                            val bmp = currentFrameBitmaps[j]
-                            if (bmp != null && !bmp.isRecycled) {
-                                activeBitmap = bmp
-                                break
-                            }
-                        }
-                        // Search forward
-                        if (activeBitmap == null) {
-                            for (j in activeFrameIndex + 1 until frameTimes.size) {
-                                val bmp = currentFrameBitmaps[j]
-                                if (bmp != null && !bmp.isRecycled) {
-                                    activeBitmap = bmp
-                                    break
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 5. Update overlay with the resolved bitmap
-                radarOverlay.bitmap = activeBitmap
-
-                // 6. Construct desired overlay list
-                val desiredOverlays = ArrayList<org.osmdroid.views.overlay.Overlay>()
-                desiredOverlays.add(radarOverlay)
-                if (userLocation != null) {
-                    userLocationMarker.position = userLocation
-                    desiredOverlays.add(userLocationMarker)
-                }
-
-                // Sync view overlays list
-                var isMatch = view.overlays.size == desiredOverlays.size
-                if (isMatch) {
-                    for (i in desiredOverlays.indices) {
-                        if (view.overlays[i] != desiredOverlays[i]) {
-                            isMatch = false
-                            break
-                        }
-                    }
-                }
-
-                if (!isMatch) {
-                    view.overlays.clear()
-                    view.overlays.addAll(desiredOverlays)
-                }
-
-                view.postInvalidate()
+            // Construct desired overlay list
+            val desiredOverlays = ArrayList<org.osmdroid.views.overlay.Overlay>()
+            desiredOverlays.add(radarOverlay)
+            if (userLocation != null) {
+                userLocationMarker.position = userLocation
+                desiredOverlays.add(userLocationMarker)
             }
+
+            // Sync view overlays list
+            var isMatch = view.overlays.size == desiredOverlays.size
+            if (isMatch) {
+                for (i in desiredOverlays.indices) {
+                    if (view.overlays[i] != desiredOverlays[i]) {
+                        isMatch = false
+                        break
+                    }
+                }
+            }
+
+            if (!isMatch) {
+                view.overlays.clear()
+                view.overlays.addAll(desiredOverlays)
+            }
+
+            view.postInvalidate()
         }
     )
 }
