@@ -196,6 +196,10 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                 }
             } catch (e: SecurityException) {
                 // Permission revoked or not granted
+            } catch (e: IllegalArgumentException) {
+                // Provider does not exist on this device
+            } catch (e: Exception) {
+                // Unexpected location manager error
             }
         }
         onDispose {

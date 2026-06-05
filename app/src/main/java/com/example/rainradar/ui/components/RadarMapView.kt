@@ -1,6 +1,7 @@
 package com.example.rainradar.ui.components
 
 import android.content.Context
+import kotlinx.coroutines.isActive
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -149,8 +150,7 @@ fun RadarMapView(
     }
 
     // Keep memory cache of bitmaps to avoid decoding them repeatedly on draw
-    // Verwende nullable Bitmap um null-Rückgaben von decodeFile sicher zu handhaben
-    val bitmapCache = remember { HashMap<String, android.graphics.Bitmap?>() }
+    val bitmapCache = remember { android.util.LruCache<String, android.graphics.Bitmap>(15) }
 
     var activeBitmapState by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
 
@@ -192,7 +192,9 @@ fun RadarMapView(
             }
 
             if (targetIndex == -1) {
-                activeBitmapState = null
+                if (isActive) {
+                    activeBitmapState = null
+                }
                 return@withContext
             }
 
@@ -200,9 +202,11 @@ fun RadarMapView(
             val timeStr = DwdWmsClient.formatIsoTime(targetTime)
             
             // 2. Check memory cache
-            val cached = bitmapCache[timeStr]
-            if (cached != null && !cached.isRecycled) {
-                activeBitmapState = cached
+            val cached = bitmapCache.get(timeStr)
+            if (cached != null) {
+                if (isActive) {
+                    activeBitmapState = cached
+                }
                 return@withContext
             }
 
@@ -214,45 +218,54 @@ fun RadarMapView(
             }
 
             try {
+                if (!isActive) return@withContext
                 val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
                 if (decoded != null) {
+                    if (!isActive) return@withContext
                     cleanRadarBitmap(decoded)
+                    
+                    if (!isActive) return@withContext
+                    bitmapCache.put(timeStr, decoded)
+                    activeBitmapState = decoded
+                } else {
+                    if (file.exists()) {
+                        file.delete()
+                    }
+                    if (isActive) {
+                        activeBitmapState = null
+                    }
                 }
-                bitmapCache[timeStr] = decoded
-                activeBitmapState = decoded
             } catch (e: OutOfMemoryError) {
                 // Clear cache on OOM and retry
-                bitmapCache.values.forEach { it?.recycle() }
-                bitmapCache.clear()
+                bitmapCache.evictAll()
                 System.gc()
                 
                 try {
+                    if (!isActive) return@withContext
                     val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
                     if (decoded != null) {
+                        if (!isActive) return@withContext
                         cleanRadarBitmap(decoded)
+                        
+                        if (!isActive) return@withContext
+                        bitmapCache.put(timeStr, decoded)
+                        activeBitmapState = decoded
+                    } else {
+                        if (file.exists()) {
+                            file.delete()
+                        }
+                        if (isActive) {
+                            activeBitmapState = null
+                        }
                     }
-                    bitmapCache[timeStr] = decoded
-                    activeBitmapState = decoded
                 } catch (e2: Throwable) {
-                    activeBitmapState = null
+                    if (isActive) {
+                        activeBitmapState = null
+                    }
                 }
             } catch (e: Exception) {
-                activeBitmapState = null
-            }
-
-            // Prune cache to keep only active and surrounding frames (OOM prevention)
-            val activeTimeKeys = HashSet<String>()
-            val radius = 5 // Keep 5 frames before and after the active frame
-            val startIdx = maxOf(0, targetIndex - radius)
-            val endIdx = minOf(frameTimes.size - 1, targetIndex + radius)
-            for (k in startIdx..endIdx) {
-                activeTimeKeys.add(DwdWmsClient.formatIsoTime(frameTimes[k]))
-            }
-
-            val keysToRemove = bitmapCache.keys.filter { it !in activeTimeKeys }
-            for (key in keysToRemove) {
-                bitmapCache.remove(key)?.let { bmp ->
-                    if (!bmp.isRecycled) bmp.recycle()
+                if (isActive) {
+                    activeBitmapState = null
                 }
             }
         }
@@ -351,9 +364,7 @@ fun RadarMapView(
         onMapReady(mapView)
         onDispose {
             locationDrawable.stopAnimation()
-            // Alle Bitmaps sicher recyclen beim Aufräumen
-            bitmapCache.values.forEach { it?.recycle() }
-            bitmapCache.clear()
+            bitmapCache.evictAll()
             mapView.onDetach()
         }
     }

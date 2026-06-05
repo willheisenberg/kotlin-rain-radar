@@ -38,6 +38,7 @@ class RadarViewModel : ViewModel() {
         startAutoRefreshPolling()
     }
 
+    @kotlin.jvm.Volatile
     private var isFirstRefreshDone = false
 
     fun refreshData(context: Context? = null, silent: Boolean = false, force: Boolean = false) {
@@ -49,43 +50,9 @@ class RadarViewModel : ViewModel() {
         val activeIndex = _activeFrameIndex.value
         val activeTime = oldTimes.getOrNull(activeIndex)
 
-        val activeContextForCache = context ?: appContext
-        if (force && activeContextForCache != null) {
-            val dir = java.io.File(activeContextForCache.cacheDir, "radar_cache")
-            if (dir.exists() && dir.isDirectory) {
-                dir.listFiles()?.forEach { it.delete() }
-            }
-        }
-
         val base = DwdWmsClient.getRoundedBaseTime()
         val times = DwdWmsClient.generateCombinedFrameTimes(base)
         _frameTimes.value = times
-
-        // Check if the cache is empty (e.g. fresh install, cleared cache, or force refresh)
-        var cachedCount = 0
-        if (activeContextForCache != null) {
-            times.forEach { time ->
-                val file = DwdWmsClient.getCachedFrameFile(activeContextForCache, time, base)
-                if (file.exists() && file.length() > 0) {
-                    cachedCount++
-                }
-            }
-        }
-
-        val isFirst = !isFirstRefreshDone && context != null
-        if (isFirst) {
-            isFirstRefreshDone = true
-        }
-
-        // If less than 45 frames are cached (e.g. after hours of inactivity or if cache was cleared), 
-        // we show the preloading screen to avoid staring at a blank map during longer downloads.
-        val isCacheInsufficient = (activeContextForCache != null && cachedCount < 45)
-        val effectiveSilent = if (isFirst || isCacheInsufficient) false else silent
-
-        if (!effectiveSilent || force) {
-            stopPlayback()
-        }
-        preloadJob?.cancel()
 
         if (force) {
             _activeFrameIndex.value = 36
@@ -108,17 +75,53 @@ class RadarViewModel : ViewModel() {
         
         val activeContext = context ?: appContext ?: return
 
-        // Clean up old forecast cache files
-        DwdWmsClient.cleanOldForecastCache(activeContext, base)
-
-        // Nur bei manuellem Refresh den Ladebalken anzeigen
-        if (!effectiveSilent || force) {
-            _isPreloading.value = true
-            _preloadProgress.value = 0f
+        if (!silent || force) {
+            stopPlayback()
         }
+        preloadJob?.cancel()
 
         // Launch preloader job on background IO threads
         preloadJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            // 1. Force clear cache on background IO thread if requested
+            if (force) {
+                val dir = java.io.File(activeContext.cacheDir, "radar_cache")
+                if (dir.exists() && dir.isDirectory) {
+                    dir.listFiles()?.forEach { it.delete() }
+                }
+            }
+
+            // 2. Clean up old forecast cache files on background IO thread
+            DwdWmsClient.cleanOldForecastCache(activeContext, base)
+
+            // 3. Check cached files count on background IO thread
+            var cachedCount = 0
+            times.forEach { time ->
+                if (DwdWmsClient.isFrameReady(activeContext, time, base)) {
+                    cachedCount++
+                }
+            }
+
+            val isFirst = !isFirstRefreshDone && context != null
+            if (isFirst) {
+                isFirstRefreshDone = true
+            }
+
+            // If less than 45 frames are cached (e.g. after hours of inactivity or if cache was cleared), 
+            // we show the preloading screen to avoid staring at a blank map during longer downloads.
+            val isCacheInsufficient = cachedCount < 45
+            val effectiveSilent = if (isFirst || isCacheInsufficient) false else silent
+
+            // Switch to Main thread for loading UI state setup
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                if (!effectiveSilent || force) {
+                    stopPlayback() // Ensure playback is stopped if showing loading screen
+                    _isPreloading.value = true
+                    _preloadProgress.value = 0f
+                } else {
+                    _isPreloading.value = false
+                }
+            }
+
             val total = times.size
             var completed = 0
             
@@ -131,11 +134,12 @@ class RadarViewModel : ViewModel() {
                         DwdWmsClient.downloadFrame(activeContext, time, base, force = force)
                     } finally {
                         semaphore.release()
-                        synchronized(this@RadarViewModel) {
+                        val currentCompleted = synchronized(this@RadarViewModel) {
                             completed++
-                            if (!effectiveSilent) {
-                                _preloadProgress.value = completed.toFloat() / total
-                            }
+                            completed
+                        }
+                        if (!effectiveSilent) {
+                            _preloadProgress.value = currentCompleted.toFloat() / total
                         }
                     }
                 }
@@ -144,7 +148,8 @@ class RadarViewModel : ViewModel() {
             // Wait for all downloads to finish or time out
             jobs.forEach { it.join() }
             
-            if (!effectiveSilent) {
+            // Switch to Main thread to reset loading states
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                 _isPreloading.value = false
                 _preloadProgress.value = 1f
             }
