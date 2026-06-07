@@ -93,7 +93,20 @@ object DwdWmsClient {
         val timeStr = formatIsoTime(time)
         return if (time.epochSecond >= base.epochSecond) {
             val baseStr = formatIsoTime(base)
-            File(dir, "frame_${timeStr}_base_${baseStr}.png")
+            val expectedFile = File(dir, "frame_${timeStr}_base_${baseStr}.png")
+            if (!expectedFile.exists()) {
+                val files = dir.listFiles()
+                if (files != null) {
+                    val prefix = "frame_${timeStr}_base_"
+                    for (file in files) {
+                        if (file.name.startsWith(prefix) && file.name.endsWith(".png")) {
+                            file.renameTo(expectedFile)
+                            break
+                        }
+                    }
+                }
+            }
+            expectedFile
         } else {
             File(dir, "frame_$timeStr.png")
         }
@@ -108,16 +121,30 @@ object DwdWmsClient {
     }
 
     /**
-     * Cleans up old forecast cache files whose base time is different from the current base time.
+     * Cleans up old cache files:
+     * - Forecast files whose base time is different from the current base time
+     * - History files that are older than oldestAllowed
      */
-    fun cleanOldForecastCache(context: Context, currentBase: Instant) {
+    fun cleanOldCache(context: Context, currentBase: Instant, oldestAllowed: Instant) {
         val dir = File(context.cacheDir, "radar_cache")
         if (dir.exists() && dir.isDirectory) {
             val currentBaseStr = formatIsoTime(currentBase)
             val files = dir.listFiles() ?: return
             for (file in files) {
-                if (file.name.contains("_base_") && !file.name.contains("_base_$currentBaseStr")) {
-                    file.delete()
+                if (file.name.contains("_base_")) {
+                    if (!file.name.contains("_base_$currentBaseStr")) {
+                        file.delete()
+                    }
+                } else if (file.name.startsWith("frame_") && file.name.endsWith(".png")) {
+                    val timeStr = file.name.substring(6, file.name.length - 4)
+                    try {
+                        val fileTime = Instant.parse(timeStr)
+                        if (fileTime.isBefore(oldestAllowed)) {
+                            file.delete()
+                        }
+                    } catch (e: Exception) {
+                        file.delete()
+                    }
                 }
             }
         }

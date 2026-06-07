@@ -90,9 +90,6 @@ class RadarViewModel : ViewModel() {
                 }
             }
 
-            // 2. Clean up old forecast cache files on background IO thread
-            DwdWmsClient.cleanOldForecastCache(activeContext, base)
-
             // 3. Check cached files count on background IO thread
             var cachedCount = 0
             times.forEach { time ->
@@ -106,10 +103,10 @@ class RadarViewModel : ViewModel() {
                 isFirstRefreshDone = true
             }
 
-            // If less than 45 frames are cached (e.g. after hours of inactivity or if cache was cleared), 
+            // If less than 50 frames are cached (e.g. after hours of inactivity or if cache was cleared), 
             // we show the preloading screen to avoid staring at a blank map during longer downloads.
-            val isCacheInsufficient = cachedCount < 45
-            val effectiveSilent = if (isFirst || isCacheInsufficient) false else silent
+            val isCacheInsufficient = cachedCount < 50
+            val effectiveSilent = if (isCacheInsufficient) false else silent
 
             // Switch to Main thread for loading UI state setup
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
@@ -147,6 +144,10 @@ class RadarViewModel : ViewModel() {
             
             // Wait for all downloads to finish or time out
             jobs.forEach { it.join() }
+
+            // Clean up old cache files (old forecast files and history older than times.first())
+            val oldestAllowed = times.firstOrNull() ?: base.minusSeconds(3600 * 3)
+            DwdWmsClient.cleanOldCache(activeContext, base, oldestAllowed)
             
             // Switch to Main thread to reset loading states
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
