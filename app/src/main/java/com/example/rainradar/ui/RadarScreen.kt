@@ -37,8 +37,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.rainradar.data.DwdWmsClient
 import com.example.rainradar.ui.components.RadarMapView
-import org.osmdroid.util.GeoPoint
-import org.osmdroid.views.MapView
+import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.maps.MapLibreMap
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -87,15 +87,12 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
         }
     }
 
-    var userLocation by remember { mutableStateOf<GeoPoint?>(null) }
-    var mapViewInstance by remember { mutableStateOf<MapView?>(null) }
+    var userLocation by remember { mutableStateOf<LatLng?>(null) }
+    var mapViewInstance by remember { mutableStateOf<MapLibreMap?>(null) }
     var hasCenteredOnUser by remember { mutableStateOf(false) }
 
     // Helper to validate if GPS location is within the radar's bounding box coverage
-    fun isLocationInRadarBounds(point: GeoPoint?): Boolean {
-        if (point == null) return false
-        val lat = point.latitude
-        val lon = point.longitude
+    fun isLocationInRadarBounds(lat: Double, lon: Double): Boolean {
         return lat in 45.0..56.576107 && lon in 2.0..19.0
     }
 
@@ -104,8 +101,9 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
     val locationListener = remember {
         object : LocationListener {
             override fun onLocationChanged(location: Location) {
-                val point = GeoPoint(location.latitude, location.longitude)
-                userLocation = if (isLocationInRadarBounds(point)) point else null
+                val lat = location.latitude
+                val lon = location.longitude
+                userLocation = if (isLocationInRadarBounds(lat, lon)) LatLng(lat, lon) else null
             }
             override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) {}
             override fun onProviderEnabled(provider: String) {}
@@ -143,7 +141,7 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
         val loc = userLocation
         val map = mapViewInstance
         if (loc != null && map != null && !hasCenteredOnUser) {
-            map.controller.animateTo(loc, 9.5, 1000L)
+            map.animateCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(loc, 9.5), 1000)
             hasCenteredOnUser = true
         }
     }
@@ -173,8 +171,9 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                 }
 
                 if (bestLastKnown != null) {
-                    val point = GeoPoint(bestLastKnown.latitude, bestLastKnown.longitude)
-                    userLocation = if (isLocationInRadarBounds(point)) point else null
+                    val lat = bestLastKnown.latitude
+                    val lon = bestLastKnown.longitude
+                    userLocation = if (isLocationInRadarBounds(lat, lon)) LatLng(lat, lon) else null
                 }
 
                 // 2. Request updates from BOTH GPS (high accuracy) and Network (indoor fallback)
@@ -390,7 +389,7 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                     onClick = {
                         userLocation?.let { loc ->
                             mapViewInstance?.let { map ->
-                                map.controller.animateTo(loc, 9.5, 1000L)
+                                map.animateCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(loc, 9.5), 1000)
                             }
                         }
                     },

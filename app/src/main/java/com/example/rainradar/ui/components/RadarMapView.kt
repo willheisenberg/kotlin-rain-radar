@@ -1,66 +1,47 @@
 package com.example.rainradar.ui.components
 
 import android.content.Context
-import kotlinx.coroutines.isActive
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.example.rainradar.data.DwdWmsClient
-import org.osmdroid.config.Configuration
-import org.osmdroid.util.GeoPoint
-import org.osmdroid.views.CustomZoomButtonsController
-import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.Marker
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
+import org.maplibre.android.camera.CameraUpdateFactory
+import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.geometry.LatLngBounds
+import org.maplibre.android.geometry.LatLngQuad
+import org.maplibre.android.location.LocationComponentActivationOptions
+import org.maplibre.android.location.LocationComponentOptions
+import org.maplibre.android.maps.MapLibreMap
+import org.maplibre.android.maps.MapView
+import org.maplibre.android.style.layers.Property
+import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.RasterLayer
+import org.maplibre.android.style.sources.ImageSource
 import java.time.Instant
-import android.animation.ValueAnimator
-import android.view.animation.LinearInterpolator
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.PixelFormat
-import android.graphics.drawable.Drawable
 
-class RadarBboxOverlay : org.osmdroid.views.overlay.Overlay() {
-    var bitmap: android.graphics.Bitmap? = null
-
-    // Bilinear-Filter für weiche Skalierung statt Nearest-Neighbor (blockig)
-    private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
-
-    override fun draw(canvas: Canvas, mapView: MapView, shadow: Boolean) {
-        if (shadow) return
-        val bmp = bitmap ?: return
-        if (bmp.isRecycled) return
-
-        val projection = mapView.projection
-        val nwPoint = android.graphics.Point()
-        val sePoint = android.graphics.Point()
-
-        // NW corner: Lat 56.576107, Lon 2.0
-        projection.toPixels(GeoPoint(56.576107, 2.0), nwPoint)
-        // SE corner: Lat 45.0, Lon 19.0
-        projection.toPixels(GeoPoint(45.0, 19.0), sePoint)
-
-        val left = nwPoint.x
-        val top = nwPoint.y
-        val right = sePoint.x
-        val bottom = sePoint.y
-
-        val destRect = android.graphics.Rect(left, top, right, bottom)
-        canvas.drawBitmap(bmp, null, destRect, bitmapPaint)
-    }
-}
-
-private fun calculateMinZoom(mapWidth: Int, mapHeight: Int): Double {
+private fun calculateMinZoom(context: Context, mapWidth: Int, mapHeight: Int): Double {
     if (mapWidth <= 0 || mapHeight <= 0) return 6.0
+
+    val density = context.resources.displayMetrics.density
+    val wDp = mapWidth.toDouble() / density
+    val hDp = mapHeight.toDouble() / density
 
     // Lon constraint:
     // Z >= log2( (W * 360.0) / (256.0 * 17.0) )
-    val minZoomLon = Math.log((mapWidth.toDouble() * 360.0) / (256.0 * 17.0)) / Math.log(2.0)
+    val minZoomLon = Math.log((wDp * 360.0) / (256.0 * 17.0)) / Math.log(2.0)
 
     // Lat constraint:
     // delta_y = ln(tan(pi/4 + lat_N/2)) - ln(tan(pi/4 + lat_S/2))
@@ -70,7 +51,7 @@ private fun calculateMinZoom(mapWidth: Int, mapHeight: Int): Double {
     val yN = Math.log(Math.tan(Math.PI / 4.0 + latN / 2.0))
     val yS = Math.log(Math.tan(Math.PI / 4.0 + latS / 2.0))
     val deltaY = yN - yS
-    val minZoomLat = Math.log((mapHeight.toDouble() * 2.0 * Math.PI) / (256.0 * deltaY)) / Math.log(2.0)
+    val minZoomLat = Math.log((hDp * 2.0 * Math.PI) / (256.0 * deltaY)) / Math.log(2.0)
 
     // Using minOf and subtracting 1.0 ensures that the entire radar frame fits in the viewport with a comfortable margin
     val minZoom = minOf(minZoomLon, minZoomLat) - 1.0
@@ -126,32 +107,13 @@ private fun cleanRadarBitmap(bitmap: android.graphics.Bitmap) {
 fun RadarMapView(
     frameTimes: List<Instant>,
     activeFrameIndex: Int,
-    userLocation: GeoPoint?,
+    userLocation: LatLng?,
     isPreloading: Boolean,
     modifier: Modifier = Modifier,
-    onMapReady: (MapView) -> Unit = {}
+    onMapReady: (MapLibreMap) -> Unit = {}
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    remember {
-        val osmConfig = Configuration.getInstance()
-        osmConfig.userAgentValue = "DwdRainRadarApp"
-        
-        val basePath = java.io.File(context.cacheDir, "osmdroid")
-        val tileCache = java.io.File(basePath, "tiles")
-        osmConfig.osmdroidBasePath = basePath
-        osmConfig.osmdroidTileCache = tileCache
-        
-        osmConfig.expirationOverrideDuration = 24 * 60 * 60 * 1000L // 24 hours
-        osmConfig.tileFileSystemCacheMaxBytes = 1024L * 1024 * 1024 // 1GB
-        osmConfig.tileFileSystemCacheTrimBytes = 800L * 1024 * 1024 // 800MB
-        
-        osmConfig.load(context, context.getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
-        osmConfig
-    }
-
-    // Keep memory cache of bitmaps to avoid decoding them repeatedly on draw
+    val context = LocalContext.current
     val bitmapCache = remember { android.util.LruCache<String, android.graphics.Bitmap>(15) }
-
     var activeBitmapState by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
 
     LaunchedEffect(activeFrameIndex, frameTimes, isPreloading) {
@@ -162,15 +124,13 @@ fun RadarMapView(
         
         val base = frameTimes.getOrNull(36) ?: DwdWmsClient.getRoundedBaseTime()
 
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            // 1. Find the best frame index to show (fallback logic)
+        withContext(Dispatchers.IO) {
             var targetIndex = -1
             if (activeFrameIndex in frameTimes.indices) {
                 val file = DwdWmsClient.getCachedFrameFile(context, frameTimes[activeFrameIndex], base)
                 if (file.exists() && file.length() > 0) {
                     targetIndex = activeFrameIndex
                 } else {
-                    // Search backward
                     for (j in activeFrameIndex - 1 downTo 0) {
                         val f = DwdWmsClient.getCachedFrameFile(context, frameTimes[j], base)
                         if (f.exists() && f.length() > 0) {
@@ -178,7 +138,6 @@ fun RadarMapView(
                             break
                         }
                     }
-                    // Search forward
                     if (targetIndex == -1) {
                         for (j in activeFrameIndex + 1 until frameTimes.size) {
                             val f = DwdWmsClient.getCachedFrameFile(context, frameTimes[j], base)
@@ -201,7 +160,6 @@ fun RadarMapView(
             val targetTime = frameTimes[targetIndex]
             val timeStr = DwdWmsClient.formatIsoTime(targetTime)
             
-            // 2. Check memory cache
             val cached = bitmapCache.get(timeStr)
             if (cached != null) {
                 if (isActive) {
@@ -210,7 +168,6 @@ fun RadarMapView(
                 return@withContext
             }
 
-            // 3. Decode & Clean in background
             val file = DwdWmsClient.getCachedFrameFile(context, targetTime, base)
             val decodeOpts = android.graphics.BitmapFactory.Options().apply {
                 inSampleSize = 2
@@ -236,7 +193,6 @@ fun RadarMapView(
                     }
                 }
             } catch (e: OutOfMemoryError) {
-                // Clear cache on OOM and retry
                 bitmapCache.evictAll()
                 System.gc()
                 
@@ -271,198 +227,193 @@ fun RadarMapView(
         }
     }
 
+    var mapInstance by remember { mutableStateOf<MapLibreMap?>(null) }
+
     val mapView = remember {
         MapView(context).apply {
-            setMultiTouchControls(true)
-            zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
-            isTilesScaledToDpi = true
-            setHorizontalMapRepetitionEnabled(false)
-            setVerticalMapRepetitionEnabled(false)
-            
-            // Set initial state
-            controller.setZoom(6.0)
-            controller.setCenter(GeoPoint(51.1657, 10.4515))
+            onCreate(null)
+        }
+    }
 
-            // Add map clamping listener
-            val clampMap = {
-                val w = width
-                val h = height
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, mapView) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> mapView.onStart()
+                Lifecycle.Event.ON_RESUME -> mapView.onResume()
+                Lifecycle.Event.ON_PAUSE -> mapView.onPause()
+                Lifecycle.Event.ON_STOP -> mapView.onStop()
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            bitmapCache.evictAll()
+            mapView.onDestroy()
+        }
+    }
+
+    LaunchedEffect(mapView) {
+        mapView.getMapAsync { map ->
+            map.uiSettings.isRotateGesturesEnabled = false
+            // Use the Liberty vector style from OpenFreeMap
+            map.setStyle("https://tiles.openfreemap.org/styles/liberty") { style ->
+                // Add the radar source and layer
+                val quad = LatLngQuad(
+                    LatLng(56.576107, 2.0),
+                    LatLng(56.576107, 19.0),
+                    LatLng(45.0, 19.0),
+                    LatLng(45.0, 2.0)
+                )
+                val emptyBmp = android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888)
+                val imageSource = ImageSource("radar-source", quad, emptyBmp)
+                style.addSource(imageSource)
+
+                val rasterLayer = RasterLayer("radar-layer", "radar-source")
+                rasterLayer.setProperties(
+                    PropertyFactory.rasterFadeDuration(0f)
+                )
+                style.addLayer(rasterLayer)
+
+                // Initialize native LocationComponent
+                val locationComponent = map.locationComponent
+                val options = LocationComponentOptions.builder(context)
+                    .pulseEnabled(true)
+                    .pulseColor(android.graphics.Color.parseColor("#3B82F6"))
+                    .pulseAlpha(0.3f)
+                    .build()
+                val activationOptions = LocationComponentActivationOptions.builder(context, style)
+                    .useDefaultLocationEngine(false)
+                    .locationComponentOptions(options)
+                    .build()
+                locationComponent.activateLocationComponent(activationOptions)
+
+                mapInstance = map
+                onMapReady(map)
+            }
+
+            // Set initial state
+            map.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(51.1657, 10.4515), 6.0))
+
+            // Keep min zoom and pan boundaries restricted dynamically depending on viewport/screen size
+            var isClamping = false
+            fun clampMap() {
+                if (isClamping) return
+                val w = mapView.width
+                val h = mapView.height
                 if (w > 0 && h > 0) {
-                    val minZoom = calculateMinZoom(w, h)
-                    if (zoomLevelDouble < minZoom) {
-                        controller.setZoom(minZoom)
+                    val minZoom = calculateMinZoom(context, w, h)
+                    map.setMinZoomPreference(minZoom)
+                    if (map.cameraPosition.zoom < minZoom) {
+                        isClamping = true
+                        map.moveCamera(CameraUpdateFactory.zoomTo(minZoom))
+                        isClamping = false
                     }
-                    val bbox = boundingBox
-                    if (bbox != null && 
-                        !bbox.latNorth.isNaN() && !bbox.latSouth.isNaN() && 
-                        !bbox.lonWest.isNaN() && !bbox.lonEast.isNaN()) {
-                        
-                        val center = mapCenter
-                        var newLat = center.latitude
+                    
+                    val bbox = map.projection.visibleRegion.latLngBounds
+                    val center = map.cameraPosition.target ?: return
+                    var newLat = center.latitude
                         var newLon = center.longitude
 
+                        val latNorth = bbox.getLatNorth()
+                        val latSouth = bbox.getLatSouth()
+                        val lonWest = bbox.getLonWest()
+                        val lonEast = bbox.getLonEast()
+
+                        val lonSpan = Math.abs(lonEast - lonWest)
+                        val latSpan = Math.abs(latNorth - latSouth)
+
+                        var changed = false
                         // Longitude clamping / centering
-                        if (bbox.longitudeSpan >= 17.0) {
-                            newLon = 10.5 // Center of [2.0, 19.0]
+                        if (lonSpan >= 17.0) {
+                            if (Math.abs(newLon - 10.5) > 1e-5) {
+                                newLon = 10.5
+                                changed = true
+                            }
                         } else {
-                            if (bbox.lonWest < 2.0) {
-                                newLon += (2.0 - bbox.lonWest)
-                            } else if (bbox.lonEast > 19.0) {
-                                newLon -= (bbox.lonEast - 19.0)
+                            if (lonWest < 2.0) {
+                                newLon += (2.0 - lonWest)
+                                changed = true
+                            } else if (lonEast > 19.0) {
+                                newLon -= (lonEast - 19.0)
+                                changed = true
                             }
                         }
 
                         // Latitude clamping / centering
                         val radarLatSpan = 56.576107 - 45.0
-                        if (bbox.latitudeSpan >= radarLatSpan) {
-                            newLat = 50.7880535 // Center of [45.0, 56.576107]
+                        if (latSpan >= radarLatSpan) {
+                            if (Math.abs(newLat - 50.7880535) > 1e-5) {
+                                newLat = 50.7880535
+                                changed = true
+                            }
                         } else {
-                            if (bbox.latNorth > 56.576107) {
-                                newLat -= (bbox.latNorth - 56.576107)
-                            } else if (bbox.latSouth < 45.0) {
-                                newLat += (45.0 - bbox.latSouth)
+                            if (latNorth > 56.576107) {
+                                newLat -= (latNorth - 56.576107)
+                                changed = true
+                            } else if (latSouth < 45.0) {
+                                newLat += (45.0 - latSouth)
+                                changed = true
                             }
                         }
 
-                        if (Math.abs(newLat - center.latitude) > 1e-6 || Math.abs(newLon - center.longitude) > 1e-6) {
-                            controller.setCenter(GeoPoint(newLat, newLon))
+                        if (changed) {
+                            isClamping = true
+                            map.moveCamera(CameraUpdateFactory.newLatLng(LatLng(newLat, newLon)))
+                            isClamping = false
                         }
-                    }
                 }
             }
 
-            addMapListener(object : org.osmdroid.events.MapListener {
-                override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
-                    clampMap()
-                    return true
-                }
-                override fun onZoom(event: org.osmdroid.events.ZoomEvent?): Boolean {
-                    clampMap()
-                    return true
-                }
-            })
-
-            addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            map.addOnCameraMoveListener {
                 clampMap()
             }
+
+            mapView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                clampMap()
+            }
+            
+            // Perform initial clamp
+            clampMap()
         }
     }
 
-    val locationDrawable = remember { LocationDotDrawable(context) }
-
-    val userLocationMarker = remember {
-        Marker(mapView).apply {
-            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-            icon = locationDrawable
-            title = "Dein Standort"
+    LaunchedEffect(activeBitmapState, mapInstance) {
+        val map = mapInstance ?: return@LaunchedEffect
+        val bitmap = activeBitmapState
+        val style = map.style ?: return@LaunchedEffect
+        val source = style.getSource("radar-source") as? ImageSource ?: return@LaunchedEffect
+        
+        if (bitmap != null) {
+            source.setImage(bitmap)
+            style.getLayer("radar-layer")?.setProperties(PropertyFactory.visibility(Property.VISIBLE))
+        } else {
+            style.getLayer("radar-layer")?.setProperties(PropertyFactory.visibility(Property.NONE))
         }
     }
 
-    val radarOverlay = remember { RadarBboxOverlay() }
-
-    DisposableEffect(mapView) {
-        onMapReady(mapView)
-        onDispose {
-            locationDrawable.stopAnimation()
-            bitmapCache.evictAll()
-            mapView.onDetach()
+    LaunchedEffect(userLocation, mapInstance) {
+        val map = mapInstance ?: return@LaunchedEffect
+        if (map.style == null) return@LaunchedEffect
+        val locationComponent = map.locationComponent
+        
+        if (userLocation != null) {
+            locationComponent.isLocationComponentEnabled = true
+            val loc = android.location.Location("manual").apply {
+                latitude = userLocation.latitude
+                longitude = userLocation.longitude
+                accuracy = 10f
+                time = System.currentTimeMillis()
+            }
+            locationComponent.forceLocationUpdate(loc)
+        } else {
+            locationComponent.isLocationComponentEnabled = false
         }
     }
 
     AndroidView(
         factory = { mapView },
-        modifier = modifier,
-        update = { view ->
-            // Update overlay with the resolved bitmap
-            radarOverlay.bitmap = activeBitmapState
-
-            // Construct desired overlay list
-            val desiredOverlays = ArrayList<org.osmdroid.views.overlay.Overlay>()
-            desiredOverlays.add(radarOverlay)
-            if (userLocation != null) {
-                userLocationMarker.position = userLocation
-                desiredOverlays.add(userLocationMarker)
-            }
-
-            // Sync view overlays list
-            var isMatch = view.overlays.size == desiredOverlays.size
-            if (isMatch) {
-                for (i in desiredOverlays.indices) {
-                    if (view.overlays[i] != desiredOverlays[i]) {
-                        isMatch = false
-                        break
-                    }
-                }
-            }
-
-            if (!isMatch) {
-                view.overlays.clear()
-                view.overlays.addAll(desiredOverlays)
-            }
-
-            view.postInvalidate()
-        }
+        modifier = modifier
     )
-}
-
-class LocationDotDrawable(context: Context) : Drawable() {
-    private val density = context.resources.displayMetrics.density
-    
-    private val coreRadius = 8f * density
-    private val borderRadius = 10f * density
-    private val maxHaloRadius = 22f * density
-    private val minHaloRadius = 10f * density
-    
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private var haloAlpha = 0.2f
-    private var haloRadius = minHaloRadius
-    
-    private val animator = ValueAnimator.ofFloat(0f, 1f).apply {
-        duration = 2000
-        repeatCount = ValueAnimator.INFINITE
-        repeatMode = ValueAnimator.RESTART
-        interpolator = LinearInterpolator()
-        addUpdateListener { animation ->
-            val fraction = animation.animatedValue as Float
-            haloRadius = minHaloRadius + (maxHaloRadius - minHaloRadius) * fraction
-            haloAlpha = 0.25f * (1f - fraction)
-            invalidateSelf()
-        }
-    }
-    
-    init {
-        animator.start()
-    }
-    
-    override fun draw(canvas: Canvas) {
-        val bounds = bounds
-        val cx = bounds.exactCenterX()
-        val cy = bounds.exactCenterY()
-        
-        paint.color = 0xFF3B82F6.toInt()
-        paint.alpha = (haloAlpha * 255).toInt()
-        paint.style = Paint.Style.FILL
-        canvas.drawCircle(cx, cy, haloRadius, paint)
-        
-        paint.color = 0x44000000
-        paint.alpha = 255
-        canvas.drawCircle(cx, cy + 1.5f * density, borderRadius + 0.5f * density, paint)
-        
-        paint.color = 0xFFFFFFFF.toInt()
-        canvas.drawCircle(cx, cy, borderRadius, paint)
-        
-        paint.color = 0xFF3B82F6.toInt()
-        canvas.drawCircle(cx, cy, coreRadius, paint)
-    }
-    
-    override fun setAlpha(alpha: Int) {}
-    override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {}
-    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
-    
-    override fun getIntrinsicWidth(): Int = (maxHaloRadius * 2).toInt()
-    override fun getIntrinsicHeight(): Int = (maxHaloRadius * 2).toInt()
-    
-    fun stopAnimation() {
-        animator.cancel()
-    }
 }

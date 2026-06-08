@@ -47,6 +47,9 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 }
 
@@ -63,8 +66,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
 
-    // Map Library (OpenStreetMap)
-    implementation("org.osmdroid:osmdroid-android:6.1.18")
+    // Map Library (MapLibre GL)
+    implementation("org.maplibre.gl:android-sdk:11.11.0")
 
     // Coroutines & Networking
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
