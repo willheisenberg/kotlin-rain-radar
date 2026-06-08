@@ -234,8 +234,8 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                     .fillMaxWidth()
                     .statusBarsPadding()
                     .padding(12.dp)
-                    .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(12.dp))
-                    .border(1.dp, BorderColor, RoundedCornerShape(12.dp))
+                    .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                    .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
                     .padding(horizontal = 14.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -258,9 +258,9 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                 Box(
                     modifier = Modifier
                         .height(32.dp)
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(7.dp))
                         .background(if (isPreloading) SurfaceBg.copy(alpha = 0.5f) else SurfaceBg)
-                        .border(1.dp, BorderColor, RoundedCornerShape(8.dp))
+                        .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
                         .clickable(enabled = !isPreloading) {
                             viewModel.setActiveFrameIndex(36)
                         }
@@ -294,8 +294,8 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(top = 90.dp, start = 12.dp)
-                    .background(DarkBg.copy(alpha = 0.85f), RoundedCornerShape(6.dp))
-                    .border(1.dp, BorderColor, RoundedCornerShape(6.dp))
+                    .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                    .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
                     .padding(horizontal = 10.dp, vertical = 5.dp)
             ) {
                 Text(
@@ -316,7 +316,7 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                     .padding(top = 90.dp, end = 12.dp)
                     .background(
                         color = if (isActiveForecast) AccentBlue.copy(alpha = 0.9f) else AccentGreen.copy(alpha = 0.9f),
-                        shape = RoundedCornerShape(6.dp)
+                        shape = RoundedCornerShape(7.dp)
                     )
                     .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
@@ -333,8 +333,8 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(bottom = 150.dp, end = 12.dp)
-                    .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(8.dp))
-                    .border(1.dp, BorderColor, RoundedCornerShape(8.dp))
+                    .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                    .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
                     .padding(10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -417,8 +417,8 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
             ) {
                 Column(
                     modifier = Modifier
-                        .background(SurfaceBg.copy(alpha = 0.95f), RoundedCornerShape(16.dp))
-                        .border(1.dp, BorderColor, RoundedCornerShape(16.dp))
+                        .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                        .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
                         .padding(horizontal = 24.dp, vertical = 20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
@@ -452,8 +452,8 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
                     .padding(12.dp)
-                    .background(SurfaceBg.copy(alpha = 0.95f), RoundedCornerShape(14.dp))
-                    .border(1.dp, BorderColor, RoundedCornerShape(14.dp))
+                    .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                    .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
                     .padding(12.dp)
             ) {
                 Row(
@@ -468,7 +468,7 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                             containerColor = if (isPlaying) Color(0xFFEF4444) else AccentBlue,
                             disabledContainerColor = SurfaceBg.copy(alpha = 0.5f)
                         ),
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(7.dp),
                         contentPadding = PaddingValues(0.dp),
                         modifier = Modifier.size(38.dp)
                     ) {
