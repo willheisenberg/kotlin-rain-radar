@@ -277,14 +277,22 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
 
                 Spacer(modifier = Modifier.width(8.dp))
                 
-                IconButton(
-                    onClick = { viewModel.refreshData(context, force = true) },
-                    modifier = Modifier.size(32.dp)
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(if (isPreloading) SurfaceBg.copy(alpha = 0.5f) else SurfaceBg)
+                        .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                        .clickable(enabled = !isPreloading) {
+                            viewModel.refreshData(context, force = true)
+                        },
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
                         contentDescription = "Aktualisieren",
-                        tint = TextPrimary
+                        tint = if (isPreloading) TextSecondary else TextPrimary,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
