@@ -46,6 +46,10 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import com.example.rainradar.billing.BillingManager
+
 
 // Sleek dark color palette
 val DarkBg = Color(0xFF0F141C)
@@ -64,6 +68,7 @@ fun formatLocalTimeStr(instant: Instant?): String {
     return formatter.format(instant)
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @SuppressLint("MissingPermission")
 @Composable
 fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose.viewModel()) {
@@ -76,6 +81,12 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
 
     val preloadProgress by viewModel.preloadProgress.collectAsState()
 
+    val billingManager = remember { BillingManager.getInstance(context) }
+    val isPremium by billingManager.isPremium.collectAsState()
+    val isPremiumDebug by billingManager.isPremiumDebug.collectAsState()
+    val productPrice by billingManager.productPrice.collectAsState()
+    var showPremiumDialog by remember { mutableStateOf(false) }
+
     // Observe App Lifecycle and reset to Now on ON_RESUME
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -83,6 +94,7 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
             if (event == Lifecycle.Event.ON_RESUME) {
                 viewModel.refreshData(context, silent = true)
                 viewModel.setActiveFrameIndex(36)
+                billingManager.queryPurchases()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -283,13 +295,26 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                         .padding(horizontal = 14.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                Column {
-                    Text(
-                        text = "OpenRain",
-                        color = TextPrimary,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                Column(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .clickable { showPremiumDialog = true }
+                        .padding(4.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "OpenRain",
+                            color = TextPrimary,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = if (isPremium) "👑" else "☆",
+                            fontSize = 13.sp,
+                            color = if (isPremium) Color(0xFFFFD700) else TextSecondary
+                        )
+                    }
                     Text(
                         text = "© OpenStreetMap | DWD (CC BY 4.0)",
                         color = TextSecondary,
@@ -617,6 +642,147 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                     )
                 }
             }
+            }
+
+            if (showPremiumDialog) {
+                AlertDialog(
+                    onDismissRequest = { showPremiumDialog = false },
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "OpenRain Premium",
+                                color = TextPrimary,
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .combinedClickable(
+                                        onLongClick = {
+                                            billingManager.toggleDeveloperBypass()
+                                        },
+                                        onClick = {}
+                                    )
+                            )
+                            if (isPremium) {
+                                Text(text = "👑", fontSize = 24.sp)
+                            }
+                        }
+                    },
+                    text = {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp)
+                        ) {
+                            Text(
+                                text = "Vorteile der Premium-Version:",
+                                color = TextPrimary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                            
+                            Row(modifier = Modifier.padding(vertical = 4.dp)) {
+                                Text(text = "📱 ", color = AccentBlue)
+                                Text(
+                                    text = "Exklusives Deutschland-Radar Homescreen-Widget",
+                                    color = TextSecondary,
+                                    fontSize = 13.sp
+                                )
+                            }
+                            Row(modifier = Modifier.padding(vertical = 4.dp)) {
+                                Text(text = "⚡ ", color = AccentBlue)
+                                Text(
+                                    text = "Aktualisierung direkt vom Widget aus",
+                                    color = TextSecondary,
+                                    fontSize = 13.sp
+                                )
+                            }
+                            Row(modifier = Modifier.padding(vertical = 4.dp)) {
+                                Text(text = "🔍 ", color = AccentBlue)
+                                Text(
+                                    text = "Präzise 2-Stunden-Regenvorhersage am Standort",
+                                    color = TextSecondary,
+                                    fontSize = 13.sp
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            Text(
+                                text = if (isPremium) {
+                                    "Status: Premium freigeschaltet! Vielen Dank für deine Unterstützung. ❤️"
+                                } else {
+                                    "Status: Free-Version (Widget gesperrt)"
+                                },
+                                color = if (isPremium) AccentGreen else TextSecondary,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp
+                            )
+
+                            if (isPremiumDebug) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "⚠️ Entwickler-Bypass ist AKTIV!",
+                                    color = Color.Yellow,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        if (!isPremium) {
+                            Button(
+                                onClick = {
+                                    val activity = context as? Activity
+                                    if (activity != null) {
+                                        billingManager.launchPurchaseFlow(activity)
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = AccentBlue
+                                ),
+                                shape = RoundedCornerShape(7.dp)
+                            ) {
+                                Text(
+                                    text = "Freischalten (${productPrice ?: "0,49 €"})",
+                                    color = Color.White
+                                )
+                            }
+                        } else {
+                            Button(
+                                onClick = { showPremiumDialog = false },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = SurfaceBg
+                                ),
+                                shape = RoundedCornerShape(7.dp)
+                            ) {
+                                Text(text = "Schließen", color = TextPrimary)
+                            }
+                        }
+                    },
+                    dismissButton = {
+                        if (!isPremium) {
+                            TextButton(onClick = { showPremiumDialog = false }) {
+                                Text(text = "Später", color = TextSecondary)
+                            }
+                        } else if (isPremiumDebug) {
+                            TextButton(onClick = { 
+                                billingManager.toggleDeveloperBypass() 
+                            }) {
+                                Text(text = "Bypass deaktivieren", color = Color.Red)
+                            }
+                        }
+                    },
+                    containerColor = SurfaceBg,
+                    textContentColor = TextSecondary,
+                    titleContentColor = TextPrimary,
+                    shape = RoundedCornerShape(12.dp)
+                )
             }
         }
     }

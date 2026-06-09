@@ -84,147 +84,154 @@ class RadarWidgetProvider : AppWidgetProvider() {
         val lat = prefs.getFloat("last_lat", 51.1657f).toDouble()
         val lon = prefs.getFloat("last_lon", 10.4515f).toDouble()
         
-        val base = DwdWmsClient.getRoundedBaseTime()
-        val times = DwdWmsClient.generateCombinedFrameTimes(base)
-        
-        val currentFrameTime = times.getOrNull(36) ?: base
-        
-        // Download current frame if not available
-        val currentFileReady = DwdWmsClient.isFrameReady(context, currentFrameTime, base) || 
-                               withContext(Dispatchers.IO) { DwdWmsClient.downloadFrame(context, currentFrameTime, base) }
-        
+        val isPremium = prefs.getBoolean("is_premium", false) || prefs.getBoolean("is_premium_debug", false)
+
         var radarBitmap: Bitmap? = null
-        if (currentFileReady) {
-            val currentFile = DwdWmsClient.getCachedFrameFile(context, currentFrameTime, base)
-            if (currentFile.exists() && currentFile.length() > 0) {
-                try {
-                    val opts = BitmapFactory.Options().apply {
-                        inSampleSize = 2
-                        inMutable = true
-                    }
-                    val rawBmp = BitmapFactory.decodeFile(currentFile.absolutePath, opts)
-                    if (rawBmp != null) {
-                        cleanRadarBitmap(rawBmp)
-                        radarBitmap = rawBmp
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to decode current radar frame", e)
-                }
-            }
-        }
-        
-        var locationName = "Deutschland"
         var forecastText = "Regen-Übersicht"
-        
+        var locationName = "Deutschland"
+        var activeCoords: Pair<Int, Int>? = null
+
         val fullWidth = 1920
         val fullHeight = 2084
-        val coords = DwdWmsClient.getPixelCoords(lat, lon, fullWidth, fullHeight)
-        
-        val activeCoords = if (hasLocation && coords != null) coords else null
-        
-        if (activeCoords != null) {
-            locationName = "Mein Standort"
-            
-            // Forecast logic: scan forecast frames
-            var firstRainTimeOffset: Int? = null
-            var firstRainIntensity: String? = null
-            var firstRainNearbyOffset: Int? = null
-            
-            // We download a subset of forecast frames to optimize data consumption
-            val forecastIndices = listOf(36, 39, 42, 45, 48, 51, 54, 57, 59)
-            val timeOffsets = listOf(0, 15, 30, 45, 60, 75, 90, 105, 120)
-            
-            for (i in forecastIndices.indices) {
-                val idx = forecastIndices[i]
-                val offsetMin = timeOffsets[i]
-                val time = times.getOrNull(idx) ?: continue
+
+        if (isPremium) {
+            val base = DwdWmsClient.getRoundedBaseTime()
+            val times = DwdWmsClient.generateCombinedFrameTimes(base)
+            val currentFrameTime = times.getOrNull(36) ?: base
+
+            // Download current frame if not available
+            val currentFileReady = DwdWmsClient.isFrameReady(context, currentFrameTime, base) || 
+                                   withContext(Dispatchers.IO) { DwdWmsClient.downloadFrame(context, currentFrameTime, base) }
+
+            if (currentFileReady) {
+                val currentFile = DwdWmsClient.getCachedFrameFile(context, currentFrameTime, base)
+                if (currentFile.exists() && currentFile.length() > 0) {
+                    try {
+                        val opts = BitmapFactory.Options().apply {
+                            inSampleSize = 2
+                            inMutable = true
+                        }
+                        val rawBmp = BitmapFactory.decodeFile(currentFile.absolutePath, opts)
+                        if (rawBmp != null) {
+                            cleanRadarBitmap(rawBmp)
+                            radarBitmap = rawBmp
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to decode current radar frame", e)
+                    }
+                }
+            }
+
+            val coords = DwdWmsClient.getPixelCoords(lat, lon, fullWidth, fullHeight)
+            activeCoords = if (hasLocation && coords != null) coords else null
+
+            if (activeCoords != null) {
+                locationName = "Mein Standort"
                 
-                val isReady = DwdWmsClient.isFrameReady(context, time, base) || 
-                              withContext(Dispatchers.IO) { DwdWmsClient.downloadFrame(context, time, base) }
+                // Forecast logic: scan forecast frames
+                var firstRainTimeOffset: Int? = null
+                var firstRainIntensity: String? = null
+                var firstRainNearbyOffset: Int? = null
                 
-                if (isReady) {
-                    val file = DwdWmsClient.getCachedFrameFile(context, time, base)
-                    if (file.exists() && file.length() > 0) {
-                        try {
-                            val opts = BitmapFactory.Options().apply {
-                                inSampleSize = 2
-                            }
-                            val bmp = BitmapFactory.decodeFile(file.absolutePath, opts)
-                            if (bmp != null) {
-                                val scaleX = bmp.width.toFloat() / fullWidth.toFloat()
-                                val scaleY = bmp.height.toFloat() / fullHeight.toFloat()
-                                val cpx = (activeCoords.first * scaleX).toInt()
-                                val cpy = (activeCoords.second * scaleY).toInt()
-                                
-                                // Check exact pixel for rain
-                                if (cpx in 0 until bmp.width && cpy in 0 until bmp.height) {
-                                    val color = bmp.getPixel(cpx, cpy)
-                                    if (isRainColor(color)) {
-                                        if (firstRainTimeOffset == null) {
-                                            firstRainTimeOffset = offsetMin
-                                            firstRainIntensity = getRainIntensityName(color)
-                                        }
-                                    }
+                // We download a subset of forecast frames to optimize data consumption
+                val forecastIndices = listOf(36, 39, 42, 45, 48, 51, 54, 57, 59)
+                val timeOffsets = listOf(0, 15, 30, 45, 60, 75, 90, 105, 120)
+                
+                for (i in forecastIndices.indices) {
+                    val idx = forecastIndices[i]
+                    val offsetMin = timeOffsets[i]
+                    val time = times.getOrNull(idx) ?: continue
+                    
+                    val isReady = DwdWmsClient.isFrameReady(context, time, base) || 
+                                  withContext(Dispatchers.IO) { DwdWmsClient.downloadFrame(context, time, base) }
+                    
+                    if (isReady) {
+                        val file = DwdWmsClient.getCachedFrameFile(context, time, base)
+                        if (file.exists() && file.length() > 0) {
+                            try {
+                                val opts = BitmapFactory.Options().apply {
+                                    inSampleSize = 2
                                 }
-                                
-                                // Check nearby area within ~5 km radius (3 pixels)
-                                if (firstRainNearbyOffset == null) {
-                                    var foundNearby = false
-                                    val radius = 3
-                                    for (dx in -radius..radius) {
-                                        for (dy in -radius..radius) {
-                                            val nx = cpx + dx
-                                            val ny = cpy + dy
-                                            if (nx in 0 until bmp.width && ny in 0 until bmp.height) {
-                                                val color = bmp.getPixel(nx, ny)
-                                                if (isRainColor(color)) {
-                                                    foundNearby = true
-                                                    break
-                                                }
+                                val bmp = BitmapFactory.decodeFile(file.absolutePath, opts)
+                                if (bmp != null) {
+                                    val scaleX = bmp.width.toFloat() / fullWidth.toFloat()
+                                    val scaleY = bmp.height.toFloat() / fullHeight.toFloat()
+                                    val cpx = (activeCoords.first * scaleX).toInt()
+                                    val cpy = (activeCoords.second * scaleY).toInt()
+                                    
+                                    // Check exact pixel for rain
+                                    if (cpx in 0 until bmp.width && cpy in 0 until bmp.height) {
+                                        val color = bmp.getPixel(cpx, cpy)
+                                        if (isRainColor(color)) {
+                                            if (firstRainTimeOffset == null) {
+                                                firstRainTimeOffset = offsetMin
+                                                firstRainIntensity = getRainIntensityName(color)
                                             }
                                         }
-                                        if (foundNearby) break
                                     }
-                                    if (foundNearby) {
-                                        firstRainNearbyOffset = offsetMin
+                                    
+                                    // Check nearby area within ~5 km radius (3 pixels)
+                                    if (firstRainNearbyOffset == null) {
+                                        var foundNearby = false
+                                        val radius = 3
+                                        for (dx in -radius..radius) {
+                                            for (dy in -radius..radius) {
+                                                val nx = cpx + dx
+                                                val ny = cpy + dy
+                                                if (nx in 0 until bmp.width && ny in 0 until bmp.height) {
+                                                    val color = bmp.getPixel(nx, ny)
+                                                    if (isRainColor(color)) {
+                                                        foundNearby = true
+                                                        break
+                                                    }
+                                                }
+                                            }
+                                            if (foundNearby) break
+                                        }
+                                        if (foundNearby) {
+                                            firstRainNearbyOffset = offsetMin
+                                        }
                                     }
+                                    
+                                    bmp.recycle()
                                 }
-                                
-                                bmp.recycle()
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed decoding forecast frame index $idx", e)
                             }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed decoding forecast frame index $idx", e)
                         }
+                    }
+                    
+                    // Break early if we've determined it's raining at this exact minute
+                    if (firstRainTimeOffset == 0) {
+                        break
                     }
                 }
                 
-                // Break early if we've determined it's raining at this exact minute
-                if (firstRainTimeOffset == 0) {
-                    break
-                }
-            }
-            
-            forecastText = when {
-                firstRainTimeOffset == 0 -> {
-                    "${firstRainIntensity ?: "Regen"} jetzt"
-                }
-                firstRainTimeOffset != null -> {
-                    "${firstRainIntensity ?: "Regen"} in $firstRainTimeOffset Min."
-                }
-                firstRainNearbyOffset != null -> {
-                    if (firstRainNearbyOffset == 0) {
-                        "Regen in der Nähe"
-                    } else {
-                        "Regen in der Nähe in $firstRainNearbyOffset Min."
+                forecastText = when {
+                    firstRainTimeOffset == 0 -> {
+                        "${firstRainIntensity ?: "Regen"} jetzt"
+                    }
+                    firstRainTimeOffset != null -> {
+                        "${firstRainIntensity ?: "Regen"} in $firstRainTimeOffset Min."
+                    }
+                    firstRainNearbyOffset != null -> {
+                        if (firstRainNearbyOffset == 0) {
+                            "Regen in der Nähe"
+                        } else {
+                            "Regen in der Nähe in $firstRainNearbyOffset Min."
+                        }
+                    }
+                    else -> {
+                        "Trocken für 2 Std."
                     }
                 }
-                else -> {
-                    "Trocken für 2 Std."
-                }
             }
+        } else {
+            forecastText = "Premium-Feature"
+            locationName = "In-App freischalten"
         }
         
-        // Render combined map of Germany with translucent radar overlay
+        // Render combined map of Germany with translucent radar overlay or locked screen
         var combinedBmp: Bitmap? = null
         try {
             val baseMapBmp = BitmapFactory.decodeResource(context.resources, R.drawable.germany_map)
@@ -234,43 +241,96 @@ class RadarWidgetProvider : AppWidgetProvider() {
                 canvas.drawBitmap(baseMapBmp, 0f, 0f, null)
                 baseMapBmp.recycle()
                 
-                // Overlay the radar frame on top with 80% opacity
-                if (radarBitmap != null) {
-                    val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG).apply {
-                        alpha = 204 // 80% opacity
+                if (isPremium) {
+                    // Overlay the radar frame on top with 80% opacity
+                    if (radarBitmap != null) {
+                        val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG).apply {
+                            alpha = 204 // 80% opacity
+                        }
+                        val srcRect = Rect(0, 0, radarBitmap.width, radarBitmap.height)
+                        val destRect = Rect(0, 0, combinedBmp.width, combinedBmp.height)
+                        canvas.drawBitmap(radarBitmap, srcRect, destRect, paint)
                     }
-                    val srcRect = Rect(0, 0, radarBitmap.width, radarBitmap.height)
-                    val destRect = Rect(0, 0, combinedBmp.width, combinedBmp.height)
-                    canvas.drawBitmap(radarBitmap, srcRect, destRect, paint)
-                }
-                
-                // Overlay user position marker
-                if (activeCoords != null) {
-                    val scaleX = combinedBmp.width.toFloat() / fullWidth.toFloat()
-                    val scaleY = combinedBmp.height.toFloat() / fullHeight.toFloat()
-                    val cpx = activeCoords.first * scaleX
-                    val cpy = activeCoords.second * scaleY
                     
-                    // Translucent blue glow circle
-                    val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = Color.parseColor("#803B82F6")
+                    // Overlay user position marker
+                    if (activeCoords != null) {
+                        val scaleX = combinedBmp.width.toFloat() / fullWidth.toFloat()
+                        val scaleY = combinedBmp.height.toFloat() / fullHeight.toFloat()
+                        val cpx = activeCoords.first * scaleX
+                        val cpy = activeCoords.second * scaleY
+                        
+                        // Translucent blue glow circle
+                        val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.parseColor("#803B82F6")
+                            style = Paint.Style.FILL
+                        }
+                        canvas.drawCircle(cpx, cpy, 18f, glowPaint)
+                        
+                        // Solid blue pin circle
+                        val pinPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.parseColor("#3B82F6")
+                            style = Paint.Style.FILL
+                        }
+                        canvas.drawCircle(cpx, cpy, 7f, pinPaint)
+                        
+                        // White center point
+                        val centerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.WHITE
+                            style = Paint.Style.FILL
+                        }
+                        canvas.drawCircle(cpx, cpy, 2.5f, centerPaint)
+                    }
+                } else {
+                    // Draw semi-translucent dark overlay
+                    val overlayPaint = Paint().apply {
+                        color = Color.parseColor("#C80F141C") // ~78% dark overlay
                         style = Paint.Style.FILL
                     }
-                    canvas.drawCircle(cpx, cpy, 18f, glowPaint)
+                    canvas.drawRect(0f, 0f, combinedBmp.width.toFloat(), combinedBmp.height.toFloat(), overlayPaint)
                     
-                    // Solid blue pin circle
-                    val pinPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = Color.parseColor("#3B82F6")
+                    val centerX = combinedBmp.width / 2f
+                    val centerY = combinedBmp.height / 2f - 40f
+                    
+                    // Padlock shackle (U-shape on top)
+                    val shacklePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.parseColor("#94A3B8")
+                        style = Paint.Style.STROKE
+                        strokeWidth = 14f
+                        strokeCap = Paint.Cap.ROUND
+                    }
+                    val shacklePath = Path().apply {
+                        moveTo(centerX - 40f, centerY)
+                        lineTo(centerX - 40f, centerY - 45f)
+                        arcTo(centerX - 40f, centerY - 85f, centerX + 40f, centerY - 5f, 180f, 180f, false)
+                        lineTo(centerX + 40f, centerY)
+                    }
+                    canvas.drawPath(shacklePath, shacklePaint)
+                    
+                    // Padlock body (rounded rectangle)
+                    val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.parseColor("#94A3B8")
                         style = Paint.Style.FILL
                     }
-                    canvas.drawCircle(cpx, cpy, 7f, pinPaint)
+                    val bodyRect = RectF(centerX - 60f, centerY, centerX + 60f, centerY + 90f)
+                    canvas.drawRoundRect(bodyRect, 18f, 18f, bodyPaint)
                     
-                    // White center point
-                    val centerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = Color.WHITE
+                    // Keyhole circle & keyhole bar
+                    val keyholePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.parseColor("#0F141C")
                         style = Paint.Style.FILL
                     }
-                    canvas.drawCircle(cpx, cpy, 2.5f, centerPaint)
+                    canvas.drawCircle(centerX, centerY + 35f, 12f, keyholePaint)
+                    val keyholeBar = RectF(centerX - 6f, centerY + 35f, centerX + 6f, centerY + 65f)
+                    canvas.drawRect(keyholeBar, keyholePaint)
+                    
+                    // "OpenRain Premium" Label text
+                    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.parseColor("#E2E8F0")
+                        textSize = 38f
+                        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                        textAlign = Paint.Align.CENTER
+                    }
+                    canvas.drawText("OpenRain Premium", centerX, centerY + 160f, textPaint)
                 }
             }
         } catch (e: Exception) {
@@ -321,16 +381,20 @@ class RadarWidgetProvider : AppWidgetProvider() {
         )
         views.setOnClickPendingIntent(R.id.widget_root, configPendingIntent)
         
-        // PendingIntent for clicking the refresh button
-        val refreshIntent = Intent(context, RadarWidgetProvider::class.java).apply {
-            action = ACTION_REFRESH
+        // PendingIntent for clicking the refresh button (direct to App if locked, otherwise normal refresh broadcast)
+        val refreshPendingIntent = if (isPremium) {
+            val refreshIntent = Intent(context, RadarWidgetProvider::class.java).apply {
+                action = ACTION_REFRESH
+            }
+            PendingIntent.getBroadcast(
+                context,
+                0,
+                refreshIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        } else {
+            configPendingIntent
         }
-        val refreshPendingIntent = PendingIntent.getBroadcast(
-            context,
-            0,
-            refreshIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
         views.setOnClickPendingIntent(R.id.widget_btn_refresh, refreshPendingIntent)
         
         appWidgetManager.updateAppWidget(appWidgetId, views)
