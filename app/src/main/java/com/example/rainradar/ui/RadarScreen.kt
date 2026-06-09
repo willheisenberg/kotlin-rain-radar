@@ -8,9 +8,7 @@ import android.location.LocationListener
 import android.location.LocationManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -90,6 +88,7 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
     var userLocation by remember { mutableStateOf<LatLng?>(null) }
     var mapViewInstance by remember { mutableStateOf<MapLibreMap?>(null) }
     var hasCenteredOnUser by remember { mutableStateOf(false) }
+    var controlsVisible by remember { mutableStateOf(true) }
 
     // Helper to validate if GPS location is within the radar's bounding box coverage
     fun isLocationInRadarBounds(lat: Double, lon: Double): Boolean {
@@ -223,22 +222,30 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                 userLocation = userLocation,
                 isPreloading = isPreloading,
                 modifier = Modifier.fillMaxSize(),
+                onMapClick = {
+                    controlsVisible = !controlsVisible
+                },
                 onMapReady = { mapView ->
                     mapViewInstance = mapView
                 }
             )
 
             // ── Header Control overlay ──
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(12.dp)
-                    .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
-                    .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+            AnimatedVisibility(
+                visible = controlsVisible,
+                enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
             ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(12.dp)
+                        .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                        .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                 Column {
                     Text(
                         text = "DWD Regenradar",
@@ -296,99 +303,118 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                     )
                 }
             }
+            }
 
             // ── Active Frame Info (Top-Left under header) ──
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(top = 90.dp, start = 12.dp)
-                    .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
-                    .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                    .padding(horizontal = 10.dp, vertical = 5.dp)
+            AnimatedVisibility(
+                visible = controlsVisible,
+                enter = slideInHorizontally(initialOffsetX = { -it }) + fadeIn(),
+                exit = slideOutHorizontally(targetOffsetX = { -it }) + fadeOut(),
+                modifier = Modifier.align(Alignment.TopStart)
             ) {
-                Text(
-                    text = if (frameTimes.isNotEmpty() && activeFrameIndex in frameTimes.indices) {
-                        formatLocalTimeStr(frameTimes[activeFrameIndex])
-                    } else "–",
-                    color = TextPrimary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Box(
+                    modifier = Modifier
+                        .padding(top = 90.dp, start = 12.dp)
+                        .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                        .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = if (frameTimes.isNotEmpty() && activeFrameIndex in frameTimes.indices) {
+                            formatLocalTimeStr(frameTimes[activeFrameIndex])
+                        } else "–",
+                        color = TextPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
 
             // ── Mode Badge Indicator (Top-Right under header) ──
             val isActiveForecast = activeFrameIndex >= 36
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 90.dp, end = 12.dp)
-                    .background(
-                        color = if (isActiveForecast) AccentBlue.copy(alpha = 0.9f) else AccentGreen.copy(alpha = 0.9f),
-                        shape = RoundedCornerShape(7.dp)
-                    )
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            AnimatedVisibility(
+                visible = controlsVisible,
+                enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+                exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+                modifier = Modifier.align(Alignment.TopEnd)
             ) {
-                Text(
-                    text = if (isActiveForecast) "Vorhersage" else "Verlauf",
-                    color = Color.White,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Box(
+                    modifier = Modifier
+                        .padding(top = 90.dp, end = 12.dp)
+                        .background(
+                            color = if (isActiveForecast) AccentBlue.copy(alpha = 0.9f) else AccentGreen.copy(alpha = 0.9f),
+                            shape = RoundedCornerShape(7.dp)
+                        )
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = if (isActiveForecast) "Vorhersage" else "Verlauf",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
 
             // ── Styled Rain Intensity Legend (Bottom-Right above controller) ──
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(bottom = 150.dp, end = 12.dp)
-                    .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
-                    .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                    .padding(10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+            AnimatedVisibility(
+                visible = controlsVisible,
+                enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+                exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+                modifier = Modifier.align(Alignment.BottomEnd)
             ) {
-                Text(
-                    text = "mm/h",
-                    color = TextSecondary,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                // Clean gradient representing radar intensity
-                Box(
+                Column(
                     modifier = Modifier
-                        .width(18.dp)
-                        .height(110.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    Color(0xFF8B008B), // Violet/Extreme
-                                    Color.Red,         // Heavy
-                                    Color.Yellow,      // Moderate
-                                    Color(0xFF22C55E), // Light
-                                    Color.Transparent  // None
+                        .padding(bottom = 150.dp, end = 12.dp)
+                        .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                        .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                        .padding(10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "mm/h",
+                        color = TextSecondary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    // Clean gradient representing radar intensity
+                    Box(
+                        modifier = Modifier
+                            .width(18.dp)
+                            .height(110.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color(0xFF8B008B), // Violet/Extreme
+                                        Color.Red,         // Heavy
+                                        Color.Yellow,      // Moderate
+                                        Color(0xFF22C55E), // Light
+                                        Color.Transparent  // None
+                                    )
                                 )
                             )
-                        )
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "stark",
-                    color = TextSecondary,
-                    fontSize = 9.sp
-                )
-                Text(
-                    text = "leicht",
-                    color = TextSecondary,
-                    fontSize = 9.sp
-                )
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "stark",
+                        color = TextSecondary,
+                        fontSize = 9.sp
+                    )
+                    Text(
+                        text = "leicht",
+                        color = TextSecondary,
+                        fontSize = 9.sp
+                    )
+                }
             }
 
             // ── Floating Location button (Bottom-Left above controller) ──
             AnimatedVisibility(
-                visible = userLocation != null,
-                enter = fadeIn(),
-                exit = fadeOut(),
+                visible = controlsVisible && userLocation != null,
+                enter = slideInHorizontally(initialOffsetX = { -it }) + fadeIn(),
+                exit = slideOutHorizontally(targetOffsetX = { -it }) + fadeOut(),
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .padding(bottom = 150.dp, start = 12.dp)
@@ -455,15 +481,20 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
             }
 
             // ── Bottom Playback & Slider Controller ──
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(12.dp)
-                    .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
-                    .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                    .padding(12.dp)
+            AnimatedVisibility(
+                visible = controlsVisible,
+                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+                modifier = Modifier.align(Alignment.BottomCenter)
             ) {
+                Column(
+                    modifier = Modifier
+                        .navigationBarsPadding()
+                        .padding(12.dp)
+                        .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                        .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                        .padding(12.dp)
+                ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
@@ -548,6 +579,7 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                         modifier = Modifier.width(50.dp)
                     )
                 }
+            }
             }
         }
     }

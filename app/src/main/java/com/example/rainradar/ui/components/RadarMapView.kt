@@ -110,6 +110,7 @@ fun RadarMapView(
     userLocation: LatLng?,
     isPreloading: Boolean,
     modifier: Modifier = Modifier,
+    onMapClick: () -> Unit = {},
     onMapReady: (MapLibreMap) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -290,6 +291,10 @@ fun RadarMapView(
                 locationComponent.activateLocationComponent(activationOptions)
 
                 mapInstance = map
+                map.addOnMapClickListener {
+                    onMapClick()
+                    false
+                }
                 onMapReady(map)
             }
 
