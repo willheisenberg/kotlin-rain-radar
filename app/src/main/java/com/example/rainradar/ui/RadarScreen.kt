@@ -285,7 +285,7 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                 ) {
                 Column {
                     Text(
-                        text = "DWD Regenradar",
+                        text = "OpenRain",
                         color = TextPrimary,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold

@@ -35,7 +35,7 @@
                 android:id="@+id/widget_title"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="DWD Regenradar"
+                android:text="OpenRain"
                 android:textColor="#E2E8F0"
                 android:textSize="12sp"
                 android:textStyle="bold" />
