@@ -8,6 +8,11 @@ import android.location.LocationListener
 import android.location.LocationManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import android.app.Activity
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -63,6 +68,7 @@ fun formatLocalTimeStr(instant: Instant?): String {
 @Composable
 fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose.viewModel()) {
     val context = LocalContext.current
+    val view = LocalView.current
     val frameTimes by viewModel.frameTimes.collectAsState()
     val activeFrameIndex by viewModel.activeFrameIndex.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
@@ -89,6 +95,21 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
     var mapViewInstance by remember { mutableStateOf<MapLibreMap?>(null) }
     var hasCenteredOnUser by remember { mutableStateOf(false) }
     var controlsVisible by remember { mutableStateOf(true) }
+
+    // Control status bar and navigation bar (system bars / Gestensteuerung) visibility
+    LaunchedEffect(controlsVisible) {
+        val activity = context as? Activity
+        val window = activity?.window
+        if (window != null) {
+            val controller = WindowCompat.getInsetsController(window, view)
+            if (controlsVisible) {
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            } else {
+                controller.hide(WindowInsetsCompat.Type.systemBars())
+                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        }
+    }
 
     // Helper to validate if GPS location is within the radar's bounding box coverage
     fun isLocationInRadarBounds(lat: Double, lon: Double): Boolean {
