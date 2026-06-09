@@ -229,4 +229,27 @@ object DwdWmsClient {
         
         return "$minX,$minY,$maxX,$maxY"
     }
+
+    /**
+     * Converts a Lat/Lon coordinate to pixel coordinates on the WMS PNG image.
+     * Bounds: lat (45.0 to 56.576107), lon (2.0 to 19.0)
+     */
+    fun getPixelCoords(lat: Double, lon: Double, width: Int, height: Int): Pair<Int, Int>? {
+        val r = 6378137.0 // Earth radius in meters (EPSG:3857)
+        val x = r * (lon * Math.PI / 180.0)
+        val y = r * Math.log(Math.tan(Math.PI / 4.0 + (lat * Math.PI / 360.0)))
+        
+        val xMin = 222638.98
+        val yMin = 5621521.49
+        val xMax = 2115070.32
+        val yMax = 7673967.65
+        
+        if (x !in xMin..xMax || y !in yMin..yMax) {
+            return null // Outside DWD radar bounds
+        }
+        
+        val px = ((x - xMin) / (xMax - xMin) * width).toInt()
+        val py = ((yMax - y) / (yMax - yMin) * height).toInt()
+        return Pair(px, py)
+    }
 }

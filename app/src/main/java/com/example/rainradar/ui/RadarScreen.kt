@@ -123,7 +123,15 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
             override fun onLocationChanged(location: Location) {
                 val lat = location.latitude
                 val lon = location.longitude
-                userLocation = if (isLocationInRadarBounds(lat, lon)) LatLng(lat, lon) else null
+                val inBounds = isLocationInRadarBounds(lat, lon)
+                userLocation = if (inBounds) LatLng(lat, lon) else null
+                if (inBounds) {
+                    context.getSharedPreferences("rain_radar_prefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .putFloat("last_lat", lat.toFloat())
+                        .putFloat("last_lon", lon.toFloat())
+                        .apply()
+                }
             }
             override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) {}
             override fun onProviderEnabled(provider: String) {}
@@ -193,7 +201,15 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                 if (bestLastKnown != null) {
                     val lat = bestLastKnown.latitude
                     val lon = bestLastKnown.longitude
-                    userLocation = if (isLocationInRadarBounds(lat, lon)) LatLng(lat, lon) else null
+                    val inBounds = isLocationInRadarBounds(lat, lon)
+                    userLocation = if (inBounds) LatLng(lat, lon) else null
+                    if (inBounds) {
+                        context.getSharedPreferences("rain_radar_prefs", Context.MODE_PRIVATE)
+                            .edit()
+                            .putFloat("last_lat", lat.toFloat())
+                            .putFloat("last_lon", lon.toFloat())
+                            .apply()
+                    }
                 }
 
                 // 2. Request updates from BOTH GPS (high accuracy) and Network (indoor fallback)
