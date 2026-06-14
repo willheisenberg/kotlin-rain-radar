@@ -45,15 +45,15 @@ Diese Methode ist am sichersten, da Android Studio automatisch seine eigene, kom
    - *Alternativ findest du die Datei unter:* `app/build/outputs/apk/debug/app-debug.apk`
 
 ### Methode 2: Über das Terminal (Kommandozeile)
-Da auf sehr aktuellen Linux-Distributionen (z. B. Arch Linux) OpenJDK 26 installiert sein kann, führt der einfache Aufruf von `./gradlew assembleDebug` manchmal zu einem Compiler-Parser-Fehler. 
 
-Um diesen zu umgehen, kannst du Gradle mitteilen, die integrierte Java-Version von Android Studio (JBR) zu verwenden. Starte dazu den Build im Terminal wie folgt:
+Du kannst den Build direkt im Terminal starten:
 
 ```bash
-# Verwende die in Android Studio integrierte Java-Laufzeitumgebung zum Bauen:
-JAVA_HOME=/opt/android-studio/jbr/ ./gradlew assembleDebug
+./gradlew assembleDebug
 ```
-*(Hinweis: Falls du Android Studio über die JetBrains Toolbox installiert hast, liegt der Pfad meist unter `~/.local/share/JetBrains/Toolbox/apps/android-studio/jbr/`)*
+
+*(Hinweis: Der Build erfordert Java 17. Solltest du unter Arch Linux eine neuere Standard-Javaversion wie Java 26 aktiv haben und Kompilierfehler erhalten, kannst du dem Befehl die Java-17-Umgebung voranstellen, z. B. `JAVA_HOME=/usr/lib/jvm/java-17-openjdk/ ./gradlew assembleDebug`)*
 
 Die fertige APK-Datei liegt nach dem Durchlauf unter:
 `app/build/outputs/apk/debug/app-debug.apk`
+

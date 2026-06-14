@@ -16,7 +16,9 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -24,6 +26,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,6 +67,7 @@ fun formatLocalTimeStr(instant: Instant?): String {
     return formatter.format(instant)
 }
 
+@kotlin.OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("MissingPermission")
 @Composable
 fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose.viewModel()) {
@@ -266,6 +270,26 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                     mapViewInstance = mapView
                 }
             )
+
+            // ── Status Bar Scrim Overlay ──
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Black.copy(alpha = 0.5f),
+                                Color.Transparent
+                            )
+                        )
+                    )
+            ) {
+                Spacer(
+                    modifier = Modifier
+                        .statusBarsPadding()
+                        .height(16.dp)
+                )
+            }
 
             // ── Header Control overlay ──
             AnimatedVisibility(
@@ -586,6 +610,7 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                         }
 
                         val sliderMax = maxOf(0f, (frameTimes.size - 1).toFloat())
+                        val interactionSource = remember { MutableInteractionSource() }
                         Slider(
                             value = activeFrameIndex.toFloat().coerceIn(0f, maxOf(0.1f, sliderMax)),
                             onValueChange = { viewModel.setActiveFrameIndex(it.toInt()) },
@@ -599,6 +624,18 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                                 disabledActiveTrackColor = Color.Transparent,
                                 disabledInactiveTrackColor = Color.Transparent
                             ),
+                            interactionSource = interactionSource,
+                            thumb = {
+                                SliderDefaults.Thumb(
+                                    interactionSource = interactionSource,
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = if (activeFrameIndex < 36) AccentGreen else AccentBlue,
+                                        disabledThumbColor = (if (activeFrameIndex < 36) AccentGreen else AccentBlue).copy(alpha = 0.5f)
+                                    ),
+                                    enabled = !isPreloading,
+                                    thumbSize = DpSize(30.dp, 30.dp)
+                                )
+                            },
                             modifier = Modifier.fillMaxWidth()
                         )
                     }

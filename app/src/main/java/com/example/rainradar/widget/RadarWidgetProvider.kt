@@ -9,6 +9,11 @@ import android.content.Intent
 import android.graphics.*
 import android.util.Log
 import android.widget.RemoteViews
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import com.example.rainradar.MainActivity
 import com.example.rainradar.R
 import com.example.rainradar.data.DwdWmsClient
@@ -20,17 +25,13 @@ import java.io.File
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.TimeUnit
 
 class RadarWidgetProvider : AppWidgetProvider() {
-    companion object {
-        private const val ACTION_REFRESH = "com.example.rainradar.widget.ACTION_REFRESH"
-        private const val TAG = "RadarWidgetProvider"
-    }
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
-        for (appWidgetId in appWidgetIds) {
-            updateWidget(context, appWidgetManager, appWidgetId)
-        }
+        schedulePeriodicUpdate(context)
+        triggerImmediateUpdate(context)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -47,36 +48,47 @@ class RadarWidgetProvider : AppWidgetProvider() {
                 appWidgetManager.partiallyUpdateAppWidget(appWidgetId, views)
             }
             
-            // Run background updates
-            val pendingResult = goAsync()
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    for (appWidgetId in appWidgetIds) {
-                        updateWidgetSuspended(context, appWidgetManager, appWidgetId)
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error in background refresh", e)
-                } finally {
-                    pendingResult.finish()
-                }
-            }
+            triggerImmediateUpdate(context)
         }
     }
 
-    private fun updateWidget(context: Context, appWidgetManager: AppWidgetManager, appWidgetId: Int) {
-        val pendingResult = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                updateWidgetSuspended(context, appWidgetManager, appWidgetId)
-            } catch (e: Exception) {
-                Log.e(TAG, "Error updating widget $appWidgetId", e)
-            } finally {
-                pendingResult.finish()
-            }
-        }
+    override fun onDisabled(context: Context) {
+        super.onDisabled(context)
+        cancelPeriodicUpdate(context)
     }
 
-    private suspend fun updateWidgetSuspended(context: Context, appWidgetManager: AppWidgetManager, appWidgetId: Int) {
+    companion object {
+        private const val ACTION_REFRESH = "com.example.rainradar.widget.ACTION_REFRESH"
+        private const val TAG = "RadarWidgetProvider"
+        private const val PERIODIC_WORK_NAME = "OpenRainWidgetPeriodicUpdate"
+        private const val UNIQUE_ONE_TIME_WORK_NAME = "OpenRainWidgetOneTimeUpdate"
+
+        fun schedulePeriodicUpdate(context: Context) {
+            val workRequest = PeriodicWorkRequestBuilder<RadarWidgetWorker>(
+                15, TimeUnit.MINUTES
+            ).build()
+            
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                PERIODIC_WORK_NAME,
+                ExistingPeriodicWorkPolicy.KEEP,
+                workRequest
+            )
+        }
+
+        fun triggerImmediateUpdate(context: Context) {
+            val workRequest = OneTimeWorkRequestBuilder<RadarWidgetWorker>().build()
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                UNIQUE_ONE_TIME_WORK_NAME,
+                ExistingWorkPolicy.REPLACE,
+                workRequest
+            )
+        }
+
+        fun cancelPeriodicUpdate(context: Context) {
+            WorkManager.getInstance(context).cancelUniqueWork(PERIODIC_WORK_NAME)
+        }
+
+    internal suspend fun updateWidgetSuspended(context: Context, appWidgetManager: AppWidgetManager, appWidgetId: Int) {
         val views = RemoteViews(context.packageName, R.layout.radar_widget)
         
         val prefs = context.getSharedPreferences("rain_radar_prefs", Context.MODE_PRIVATE)
@@ -417,5 +429,6 @@ class RadarWidgetProvider : AppWidgetProvider() {
             hue in 25.0f..70.0f -> "Mäßiger Regen"
             else -> "Leichter Regen"
         }
+    }
     }
 }
