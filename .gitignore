@@ -8,3 +8,14 @@ build/
 .externalNativeBuild
 .cxx
 local.properties
+
+# Build artifacts
+*.apk
+*.apks
+*.aab
+app/release/
+
+# Certificates and keys
+*.jks
+*.keystore
+
