@@ -51,7 +51,25 @@ class RadarViewModel : ViewModel() {
         val activeTime = oldTimes.getOrNull(activeIndex)
 
         val base = DwdWmsClient.getRoundedBaseTime()
-        val times = DwdWmsClient.generateCombinedFrameTimes(base)
+        
+        val times: List<Instant>
+        if (!force && oldTimes.size == 60) {
+            val currentBaseTime = oldTimes[36]
+            val diffSeconds = base.epochSecond - currentBaseTime.epochSecond
+            val diffSteps = (diffSeconds / 300).toInt()
+            if (diffSteps in 1 until 60) {
+                val mutableTimes = oldTimes.drop(diffSteps).toMutableList()
+                for (k in (60 - diffSteps) until 60) {
+                    val newTime = base.plusSeconds((k - 36) * 5 * 60L)
+                    mutableTimes.add(newTime)
+                }
+                times = mutableTimes
+            } else {
+                times = DwdWmsClient.generateCombinedFrameTimes(base)
+            }
+        } else {
+            times = DwdWmsClient.generateCombinedFrameTimes(base)
+        }
         _frameTimes.value = times
 
         if (force) {
@@ -103,9 +121,9 @@ class RadarViewModel : ViewModel() {
                 isFirstRefreshDone = true
             }
 
-            // If less than 50 frames are cached (e.g. after hours of inactivity or if cache was cleared), 
+            // If less than 32 frames are cached (e.g. after more than 20 minutes of inactivity or if cache was cleared), 
             // we show the preloading screen to avoid staring at a blank map during longer downloads.
-            val isCacheInsufficient = cachedCount < 50
+            val isCacheInsufficient = cachedCount < 32
             val effectiveSilent = if (isCacheInsufficient) false else silent
 
             // Switch to Main thread for loading UI state setup
@@ -147,7 +165,7 @@ class RadarViewModel : ViewModel() {
 
             // Clean up old cache files (old forecast files and history older than times.first())
             val oldestAllowed = times.firstOrNull() ?: base.minusSeconds(3600 * 3)
-            DwdWmsClient.cleanOldCache(activeContext, base, oldestAllowed)
+            DwdWmsClient.cleanOldCache(activeContext, base, oldestAllowed, times)
             
             // Switch to Main thread to reset loading states
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {

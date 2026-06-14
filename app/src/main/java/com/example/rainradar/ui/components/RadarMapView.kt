@@ -273,7 +273,8 @@ fun RadarMapView(
 
                 val rasterLayer = RasterLayer("radar-layer", "radar-source")
                 rasterLayer.setProperties(
-                    PropertyFactory.rasterFadeDuration(0f)
+                    PropertyFactory.rasterFadeDuration(0f),
+                    PropertyFactory.rasterOpacity(0.75f)
                 )
                 style.addLayer(rasterLayer)
 
