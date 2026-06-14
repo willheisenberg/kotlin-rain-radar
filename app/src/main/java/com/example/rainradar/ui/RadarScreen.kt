@@ -272,23 +272,29 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
             )
 
             // ── Status Bar Scrim Overlay ──
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color.Black.copy(alpha = 0.5f),
-                                Color.Transparent
+            AnimatedVisibility(
+                visible = controlsVisible,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Black.copy(alpha = 0.5f),
+                                    Color.Transparent
+                                )
                             )
                         )
+                ) {
+                    Spacer(
+                        modifier = Modifier
+                            .statusBarsPadding()
+                            .height(16.dp)
                     )
-            ) {
-                Spacer(
-                    modifier = Modifier
-                        .statusBarsPadding()
-                        .height(16.dp)
-                )
+                }
             }
 
             // ── Header Control overlay ──
