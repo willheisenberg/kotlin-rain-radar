@@ -1,6 +1,10 @@
-# DWD Regenradar Mobile App (Kotlin)
+# OpenRain — DWD Regenradar Mobile App
 
-Diese mobile Android-App basiert auf dem KDE Plasma DWD-Regenradar-Widget und wurde vollständig in **Kotlin & Jetpack Compose** mit **Osmdroid** für interaktive OpenStreetMap-Karten implementiert.
+<p align="left">
+  <img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher.jpg" width="128" height="128" style="border-radius: 50%;" alt="OpenRain Logo" />
+</p>
+
+Diese mobile Android-App (**OpenRain**) basiert auf dem KDE Plasma DWD-Regenradar-Widget und wurde vollständig in **Kotlin & Jetpack Compose** mit **Osmdroid** für interaktive OpenStreetMap-Karten implementiert.
 
 ## Features
 
@@ -21,7 +25,7 @@ Die App folgt modernen Android-Architekturrichtlinien (MVVM):
 
 ## Ausführen und Testen
 
-1. Öffne den Ordner `/home/tesla/githubprojects/kotlin-rain-radar` in **Android Studio**.
+1. Öffne das Projekt-Verzeichnis `kotlin-rain-radar` in **Android Studio**.
 2. Lass Gradle das Projekt synchronisieren.
 3. Starte die App auf einem Android-Emulator oder physischen Device (erfordert Android API 26+).
 
