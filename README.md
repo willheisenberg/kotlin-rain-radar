@@ -20,7 +20,7 @@ Diese mobile Android-App (**OpenRain**) basiert auf dem KDE Plasma DWD-Regenrada
 <p align="center">
   <img src="assets/screenshot_app_controls.png" width="250" alt="OpenRain App mit Steuerung" />
   <img src="assets/screenshot_app_fullscreen.png" width="250" alt="OpenRain App Vollbild" />
-  <img src="assets/screenshot_widget.png" width="250" alt="OpenRain Homescreen Widget" />
+  <img src="assets/screenshot_widget_v2.png" width="250" alt="OpenRain Homescreen Widget" />
 </p>
 
 ## Struktur & Architektur
