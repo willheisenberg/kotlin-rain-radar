@@ -93,22 +93,23 @@ object DwdWmsClient {
         val timeStr = formatIsoTime(time)
         return if (time.epochSecond >= base.epochSecond) {
             val baseStr = formatIsoTime(base)
-            val expectedFile = File(dir, "frame_${timeStr}_base_${baseStr}.png")
+            File(dir, "frame_${timeStr}_base_${baseStr}.png")
+        } else {
+            val expectedFile = File(dir, "frame_$timeStr.png")
             if (!expectedFile.exists()) {
                 val files = dir.listFiles()
                 if (files != null) {
                     val prefix = "frame_${timeStr}_base_"
                     for (file in files) {
                         if (file.name.startsWith(prefix) && file.name.endsWith(".png")) {
-                            file.renameTo(expectedFile)
-                            break
+                            if (file.renameTo(expectedFile)) {
+                                break
+                            }
                         }
                     }
                 }
             }
             expectedFile
-        } else {
-            File(dir, "frame_$timeStr.png")
         }
     }
 
@@ -125,25 +126,65 @@ object DwdWmsClient {
      * - Forecast files whose base time is different from the current base time
      * - History files that are older than oldestAllowed
      */
-    fun cleanOldCache(context: Context, currentBase: Instant, oldestAllowed: Instant) {
+    fun cleanOldCache(context: Context, currentBase: Instant, oldestAllowed: Instant, activeTimes: List<Instant> = emptyList()) {
         val dir = File(context.cacheDir, "radar_cache")
         if (dir.exists() && dir.isDirectory) {
             val currentBaseStr = formatIsoTime(currentBase)
             val files = dir.listFiles() ?: return
+            
+            val activeTimesSet = if (activeTimes.isEmpty()) {
+                generateCombinedFrameTimes(currentBase).map { formatIsoTime(it) }.toSet()
+            } else {
+                activeTimes.map { formatIsoTime(it) }.toSet()
+            }
+            
             for (file in files) {
-                if (file.name.contains("_base_")) {
-                    if (!file.name.contains("_base_$currentBaseStr")) {
-                        file.delete()
-                    }
-                } else if (file.name.startsWith("frame_") && file.name.endsWith(".png")) {
-                    val timeStr = file.name.substring(6, file.name.length - 4)
+                val name = file.name
+                if (!name.startsWith("frame_") || !name.endsWith(".png")) {
+                    continue
+                }
+                
+                if (name.contains("_base_")) {
                     try {
-                        val fileTime = Instant.parse(timeStr)
-                        if (fileTime.isBefore(oldestAllowed)) {
+                        val firstBaseIndex = name.indexOf("_base_")
+                        if (firstBaseIndex != -1) {
+                            val timeStr = name.substring(6, firstBaseIndex)
+                            val baseStr = name.substring(firstBaseIndex + 6, name.length - 4)
+                            
+                            if (!activeTimesSet.contains(timeStr)) {
+                                file.delete()
+                            } else {
+                                val fileTime = Instant.parse(timeStr)
+                                if (fileTime.isBefore(currentBase)) {
+                                    val dest = File(dir, "frame_$timeStr.png")
+                                    if (!dest.exists()) {
+                                        file.renameTo(dest)
+                                    } else {
+                                        file.delete()
+                                    }
+                                } else if (baseStr != currentBaseStr) {
+                                    file.delete()
+                                }
+                            }
+                        } else {
                             file.delete()
                         }
                     } catch (e: Exception) {
                         file.delete()
+                    }
+                } else {
+                    val timeStr = name.substring(6, name.length - 4)
+                    if (!activeTimesSet.contains(timeStr)) {
+                        file.delete()
+                    } else {
+                        try {
+                            val fileTime = Instant.parse(timeStr)
+                            if (fileTime.isBefore(oldestAllowed)) {
+                                file.delete()
+                            }
+                        } catch (e: Exception) {
+                            file.delete()
+                        }
                     }
                 }
             }
