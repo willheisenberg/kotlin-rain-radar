@@ -1,7 +1,7 @@
 # OpenRain — DWD Regenradar Mobile App
 
 <p align="center">
-  <img src="assets/logo.png" width="160" height="160" alt="OpenRain Logo" />
+  <img src="assets/logo.png" width="320" height="320" alt="OpenRain Logo" />
 </p>
 
 Diese mobile Android-App (**OpenRain**) basiert auf dem KDE Plasma DWD-Regenradar-Widget und wurde vollständig in **Kotlin & Jetpack Compose** mit **Osmdroid** für interaktive OpenStreetMap-Karten implementiert.
