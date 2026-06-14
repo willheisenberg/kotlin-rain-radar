@@ -12,8 +12,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         MapLibre.getInstance(this)
+        
+        val showBilling = intent?.getBooleanExtra("show_billing", false) ?: false
+        
         setContent {
-            RadarScreen()
+            RadarScreen(initialShowBilling = showBilling)
         }
     }
 }

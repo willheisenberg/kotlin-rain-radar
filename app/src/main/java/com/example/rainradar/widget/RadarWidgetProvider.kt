@@ -384,6 +384,9 @@ class RadarWidgetProvider : AppWidgetProvider() {
         // PendingIntent for clicking the whole widget to launch MainActivity
         val configIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            if (!isPremium) {
+                putExtra("show_billing", true)
+            }
         }
         val configPendingIntent = PendingIntent.getActivity(
             context,

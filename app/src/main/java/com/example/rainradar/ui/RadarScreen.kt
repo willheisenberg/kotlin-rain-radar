@@ -74,7 +74,10 @@ fun formatLocalTimeStr(instant: Instant?): String {
 @kotlin.OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @SuppressLint("MissingPermission")
 @Composable
-fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose.viewModel()) {
+fun RadarScreen(
+    viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose.viewModel(),
+    initialShowBilling: Boolean = false
+) {
     val context = LocalContext.current
     val view = LocalView.current
     val frameTimes by viewModel.frameTimes.collectAsState()
@@ -88,7 +91,7 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
     val isPremium by billingManager.isPremium.collectAsState()
     val isPremiumDebug by billingManager.isPremiumDebug.collectAsState()
     val productPrice by billingManager.productPrice.collectAsState()
-    var showPremiumDialog by remember { mutableStateOf(false) }
+    var showPremiumDialog by remember { mutableStateOf(initialShowBilling) }
 
     // Observe App Lifecycle and reset to Now on ON_RESUME
     val lifecycleOwner = LocalLifecycleOwner.current
