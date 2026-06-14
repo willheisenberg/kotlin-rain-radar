@@ -297,129 +297,129 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                 }
             }
 
-            // ── Header Control overlay ──
+            // ── Top UI Control Panel (Header & Badges) ──
             AnimatedVisibility(
                 visible = controlsVisible,
                 enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
-                exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
+                exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+                modifier = Modifier.align(Alignment.TopCenter)
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .statusBarsPadding()
                         .padding(12.dp)
-                        .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
-                        .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                        .padding(horizontal = 14.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                Column {
-                    Text(
-                        text = "OpenRain",
-                        color = TextPrimary,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "© OpenStreetMap | DWD (CC BY 4.0)",
-                        color = TextSecondary,
-                        fontSize = 10.sp
-                    )
-                }
-                Spacer(modifier = Modifier.weight(1f))
-
-                // Jetzt button
-                Box(
-                    modifier = Modifier
-                        .height(32.dp)
-                        .clip(RoundedCornerShape(7.dp))
-                        .background(if (isPreloading) SurfaceBg.copy(alpha = 0.5f) else SurfaceBg)
-                        .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                        .clickable(enabled = !isPreloading) {
-                            viewModel.setActiveFrameIndex(36)
+                    // Header Card Row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                            .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "OpenRain",
+                                color = TextPrimary,
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "© OpenStreetMap | DWD (CC BY 4.0)",
+                                color = TextSecondary,
+                                fontSize = 10.sp
+                            )
                         }
-                        .padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Jetzt",
-                        color = if (isPreloading) TextSecondary else TextPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
+                        Spacer(modifier = Modifier.weight(1f))
 
-                Spacer(modifier = Modifier.width(8.dp))
-                
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(RoundedCornerShape(7.dp))
-                        .background(if (isPreloading) SurfaceBg.copy(alpha = 0.5f) else SurfaceBg)
-                        .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                        .clickable(enabled = !isPreloading) {
-                            viewModel.refreshData(context, force = true)
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Aktualisieren",
-                        tint = if (isPreloading) TextSecondary else TextPrimary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-            }
+                        // Jetzt button
+                        Box(
+                            modifier = Modifier
+                                .height(32.dp)
+                                .clip(RoundedCornerShape(7.dp))
+                                .background(if (isPreloading) SurfaceBg.copy(alpha = 0.5f) else SurfaceBg)
+                                .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                                .clickable(enabled = !isPreloading) {
+                                    viewModel.setActiveFrameIndex(36)
+                                }
+                                .padding(horizontal = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Jetzt",
+                                color = if (isPreloading) TextSecondary else TextPrimary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
 
-            // ── Active Frame Info (Top-Left under header) ──
-            AnimatedVisibility(
-                visible = controlsVisible,
-                enter = slideInHorizontally(initialOffsetX = { -it }) + fadeIn(),
-                exit = slideOutHorizontally(targetOffsetX = { -it }) + fadeOut(),
-                modifier = Modifier.align(Alignment.TopStart)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .padding(top = 90.dp, start = 12.dp)
-                        .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
-                        .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                        .padding(horizontal = 10.dp, vertical = 5.dp)
-                ) {
-                    Text(
-                        text = if (frameTimes.isNotEmpty() && activeFrameIndex in frameTimes.indices) {
-                            formatLocalTimeStr(frameTimes[activeFrameIndex])
-                        } else "–",
-                        color = TextPrimary,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(RoundedCornerShape(7.dp))
+                                .background(if (isPreloading) SurfaceBg.copy(alpha = 0.5f) else SurfaceBg)
+                                .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                                .clickable(enabled = !isPreloading) {
+                                    viewModel.refreshData(context, force = true)
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Aktualisieren",
+                                tint = if (isPreloading) TextSecondary else TextPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
 
-            // ── Mode Badge Indicator (Top-Right under header) ──
-            val isActiveForecast = activeFrameIndex >= 36
-            AnimatedVisibility(
-                visible = controlsVisible,
-                enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
-                exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
-                modifier = Modifier.align(Alignment.TopEnd)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .padding(top = 90.dp, end = 12.dp)
-                        .background(
-                            color = if (isActiveForecast) AccentBlue.copy(alpha = 0.9f) else AccentGreen.copy(alpha = 0.9f),
-                            shape = RoundedCornerShape(7.dp)
-                        )
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = if (isActiveForecast) "Vorhersage" else "Verlauf",
-                        color = Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Badges Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Active Frame Info (Top-Left under header)
+                        Box(
+                            modifier = Modifier
+                                .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                                .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Text(
+                                text = if (frameTimes.isNotEmpty() && activeFrameIndex in frameTimes.indices) {
+                                    formatLocalTimeStr(frameTimes[activeFrameIndex])
+                                } else "–",
+                                color = TextPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        // Mode Badge (Top-Right under header)
+                        val isActiveForecast = activeFrameIndex >= 36
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    color = if (isActiveForecast) AccentBlue.copy(alpha = 0.9f) else AccentGreen.copy(alpha = 0.9f),
+                                    shape = RoundedCornerShape(7.dp)
+                                )
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = if (isActiveForecast) "Vorhersage" else "Verlauf",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
 
