@@ -1,6 +1,10 @@
-# DWD Regenradar Mobile App (Kotlin)
+# OpenRain — DWD Regenradar Mobile App
 
-Diese mobile Android-App basiert auf dem KDE Plasma DWD-Regenradar-Widget und wurde vollständig in **Kotlin & Jetpack Compose** mit **Osmdroid** für interaktive OpenStreetMap-Karten implementiert.
+<p align="center">
+  <img src="assets/logo.png" width="320" height="320" alt="OpenRain Logo" />
+</p>
+
+Diese mobile Android-App (**OpenRain**) basiert auf dem KDE Plasma DWD-Regenradar-Widget und wurde vollständig in **Kotlin & Jetpack Compose** mit **Osmdroid** für interaktive OpenStreetMap-Karten implementiert.
 
 ## Features
 
@@ -10,6 +14,14 @@ Diese mobile Android-App basiert auf dem KDE Plasma DWD-Regenradar-Widget und wu
 - **Verlauf & Vorhersage** — Umschaltbar zwischen vergangenen Regenradaraufzeichnungen und der 2-stündigen DWD-Niederschlagsprognose.
 - **Standortbestimmung** — Springe direkt zu deinem eigenen Standort (erfordert GPS-Freigabe).
 - **Modernes Design** — Premium Dark-Mode Oberfläche mit minimalistischer Farbpalette und integrierter Intensitätslegende.
+
+## Screenshots
+
+<p align="center">
+  <img src="assets/screenshot_app_controls.png" width="250" alt="OpenRain App mit Steuerung" />
+  <img src="assets/screenshot_app_fullscreen.png" width="250" alt="OpenRain App Vollbild" />
+  <img src="assets/screenshot_widget_v2.png" width="250" alt="OpenRain Homescreen Widget" />
+</p>
 
 ## Struktur & Architektur
 
@@ -21,7 +33,7 @@ Die App folgt modernen Android-Architekturrichtlinien (MVVM):
 
 ## Ausführen und Testen
 
-1. Öffne den Ordner `/home/tesla/githubprojects/kotlin-rain-radar` in **Android Studio**.
+1. Öffne das Projekt-Verzeichnis `kotlin-rain-radar` in **Android Studio**.
 2. Lass Gradle das Projekt synchronisieren.
 3. Starte die App auf einem Android-Emulator oder physischen Device (erfordert Android API 26+).
 
@@ -41,15 +53,15 @@ Diese Methode ist am sichersten, da Android Studio automatisch seine eigene, kom
    - *Alternativ findest du die Datei unter:* `app/build/outputs/apk/debug/app-debug.apk`
 
 ### Methode 2: Über das Terminal (Kommandozeile)
-Da auf sehr aktuellen Linux-Distributionen (z. B. Arch Linux) OpenJDK 26 installiert sein kann, führt der einfache Aufruf von `./gradlew assembleDebug` manchmal zu einem Compiler-Parser-Fehler. 
 
-Um diesen zu umgehen, kannst du Gradle mitteilen, die integrierte Java-Version von Android Studio (JBR) zu verwenden. Starte dazu den Build im Terminal wie folgt:
+Du kannst den Build direkt im Terminal starten:
 
 ```bash
-# Verwende die in Android Studio integrierte Java-Laufzeitumgebung zum Bauen:
-JAVA_HOME=/opt/android-studio/jbr/ ./gradlew assembleDebug
+./gradlew assembleDebug
 ```
-*(Hinweis: Falls du Android Studio über die JetBrains Toolbox installiert hast, liegt der Pfad meist unter `~/.local/share/JetBrains/Toolbox/apps/android-studio/jbr/`)*
+
+*(Hinweis: Der Build erfordert Java 17. Solltest du unter Arch Linux eine neuere Standard-Javaversion wie Java 26 aktiv haben und Kompilierfehler erhalten, kannst du dem Befehl die Java-17-Umgebung voranstellen, z. B. `JAVA_HOME=/usr/lib/jvm/java-17-openjdk/ ./gradlew assembleDebug`)*
 
 Die fertige APK-Datei liegt nach dem Durchlauf unter:
 `app/build/outputs/apk/debug/app-debug.apk`
+
