@@ -15,6 +15,14 @@ Diese mobile Android-App (**OpenRain**) basiert auf dem KDE Plasma DWD-Regenrada
 - **Standortbestimmung** — Springe direkt zu deinem eigenen Standort (erfordert GPS-Freigabe).
 - **Modernes Design** — Premium Dark-Mode Oberfläche mit minimalistischer Farbpalette und integrierter Intensitätslegende.
 
+## Screenshots
+
+<p align="center">
+  <img src="assets/screenshot_app_controls.png" width="250" alt="OpenRain App mit Steuerung" />
+  <img src="assets/screenshot_app_fullscreen.png" width="250" alt="OpenRain App Vollbild" />
+  <img src="assets/screenshot_widget.png" width="250" alt="OpenRain Homescreen Widget" />
+</p>
+
 ## Struktur & Architektur
 
 Die App folgt modernen Android-Architekturrichtlinien (MVVM):
