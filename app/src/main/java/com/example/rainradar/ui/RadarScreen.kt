@@ -497,7 +497,7 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                         .padding(12.dp)
                         .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
                         .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                        .padding(12.dp)
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -513,13 +513,30 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                         ),
                         shape = RoundedCornerShape(7.dp),
                         contentPadding = PaddingValues(0.dp),
-                        modifier = Modifier.size(38.dp)
+                        modifier = Modifier.size(46.dp)
                     ) {
-                        Text(
-                            text = if (isPreloading) "⏳" else if (isPlaying) "⏸" else "▶",
-                            color = Color.White,
-                            fontSize = 16.sp
-                        )
+                        if (isPreloading) {
+                            Text(
+                                text = "⏳",
+                                color = Color.White,
+                                fontSize = 20.sp
+                            )
+                        } else if (isPlaying) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(modifier = Modifier.size(width = 4.dp, height = 16.dp).background(Color.White, RoundedCornerShape(1.dp)))
+                                Box(modifier = Modifier.size(width = 4.dp, height = 16.dp).background(Color.White, RoundedCornerShape(1.dp)))
+                            }
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "Play",
+                                tint = Color.White,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.width(12.dp))
