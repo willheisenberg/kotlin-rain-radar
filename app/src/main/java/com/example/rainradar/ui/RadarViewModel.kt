@@ -16,7 +16,7 @@ class RadarViewModel : ViewModel() {
     private val _frameTimes = MutableStateFlow<List<Instant>>(emptyList())
     val frameTimes: StateFlow<List<Instant>> = _frameTimes.asStateFlow()
 
-    private val _activeFrameIndex = MutableStateFlow(36) // Start at index 36 (the current live frame, wie KDE Extension)
+    private val _activeFrameIndex = MutableStateFlow(DwdWmsClient.PAST_FRAME_COUNT) // Start at PAST_FRAME_COUNT (the current live frame, wie KDE Extension)
     val activeFrameIndex: StateFlow<Int> = _activeFrameIndex.asStateFlow()
 
     private val _isPlaying = MutableStateFlow(false)
@@ -53,14 +53,14 @@ class RadarViewModel : ViewModel() {
         val base = DwdWmsClient.getRoundedBaseTime()
         
         val times: List<Instant>
-        if (!force && oldTimes.size == 60) {
-            val currentBaseTime = oldTimes[36]
+        if (!force && oldTimes.size == DwdWmsClient.TOTAL_FRAME_COUNT) {
+            val currentBaseTime = oldTimes[DwdWmsClient.PAST_FRAME_COUNT]
             val diffSeconds = base.epochSecond - currentBaseTime.epochSecond
-            val diffSteps = (diffSeconds / 300).toInt()
-            if (diffSteps in 1 until 60) {
+            val diffSteps = (diffSeconds / DwdWmsClient.FRAME_INTERVAL_SECONDS).toInt()
+            if (diffSteps in 1 until DwdWmsClient.TOTAL_FRAME_COUNT) {
                 val mutableTimes = oldTimes.drop(diffSteps).toMutableList()
-                for (k in (60 - diffSteps) until 60) {
-                    val newTime = base.plusSeconds((k - 36) * 5 * 60L)
+                for (k in (DwdWmsClient.TOTAL_FRAME_COUNT - diffSteps) until DwdWmsClient.TOTAL_FRAME_COUNT) {
+                    val newTime = base.plusSeconds((k - DwdWmsClient.PAST_FRAME_COUNT) * DwdWmsClient.FRAME_INTERVAL_SECONDS)
                     mutableTimes.add(newTime)
                 }
                 times = mutableTimes
@@ -73,16 +73,16 @@ class RadarViewModel : ViewModel() {
         _frameTimes.value = times
 
         if (force) {
-            _activeFrameIndex.value = 36
+            _activeFrameIndex.value = DwdWmsClient.PAST_FRAME_COUNT
         } else if (activeTime != null) {
             val newIndex = times.indexOf(activeTime)
             if (newIndex != -1) {
                 _activeFrameIndex.value = newIndex
             } else {
-                _activeFrameIndex.value = 36
+                _activeFrameIndex.value = DwdWmsClient.PAST_FRAME_COUNT
             }
         } else {
-            _activeFrameIndex.value = 36
+            _activeFrameIndex.value = DwdWmsClient.PAST_FRAME_COUNT
         }
 
         if (context == null && appContext == null) {
@@ -138,7 +138,14 @@ class RadarViewModel : ViewModel() {
             }
 
             val total = times.size
-            var completed = 0
+            val completed = java.util.concurrent.atomic.AtomicInteger(0)
+
+            // CRITICAL: Clean old cache BEFORE downloading, so that stale forecast
+            // images (which have now moved into the past) are deleted and won't be
+            // served as cache hits during download. Without this, old prediction
+            // images get displayed as historical observations.
+            val oldestAllowed = times.firstOrNull() ?: base.minusSeconds(3600 * 3)
+            DwdWmsClient.cleanOldCache(activeContext, base, oldestAllowed, times)
             
             // Download frames concurrently up to 5 parallel tasks
             val semaphore = kotlinx.coroutines.sync.Semaphore(5)
@@ -149,10 +156,7 @@ class RadarViewModel : ViewModel() {
                         DwdWmsClient.downloadFrame(activeContext, time, base, force = force)
                     } finally {
                         semaphore.release()
-                        val currentCompleted = synchronized(this@RadarViewModel) {
-                            completed++
-                            completed
-                        }
+                        val currentCompleted = completed.incrementAndGet()
                         if (!effectiveSilent) {
                             _preloadProgress.value = currentCompleted.toFloat() / total
                         }
@@ -163,8 +167,7 @@ class RadarViewModel : ViewModel() {
             // Wait for all downloads to finish or time out
             jobs.forEach { it.join() }
 
-            // Clean up old cache files (old forecast files and history older than times.first())
-            val oldestAllowed = times.firstOrNull() ?: base.minusSeconds(3600 * 3)
+            // Second pass: clean up any files that fell out of the active window
             DwdWmsClient.cleanOldCache(activeContext, base, oldestAllowed, times)
             
             // Switch to Main thread to reset loading states
@@ -227,13 +230,13 @@ class RadarViewModel : ViewModel() {
             while (true) {
                 delay(30000) // 30 seconds
                 val times = _frameTimes.value
-                if (times.size >= 60) {
-                    val currentBaseTime = times[36]
+                if (times.size >= DwdWmsClient.TOTAL_FRAME_COUNT) {
+                    val currentBaseTime = times[DwdWmsClient.PAST_FRAME_COUNT]
                     
                     // Calculate what the baseTime should be right now
                     val now = Instant.now()
                     val epochSec = now.epochSecond
-                    val roundedSec = ((epochSec - 600) / 300) * 300
+                    val roundedSec = ((epochSec - DwdWmsClient.SAFETY_OFFSET_SECONDS) / DwdWmsClient.FRAME_INTERVAL_SECONDS) * DwdWmsClient.FRAME_INTERVAL_SECONDS
                     val expectedBaseTime = Instant.ofEpochSecond(roundedSec)
                     
                     if (expectedBaseTime != currentBaseTime) {

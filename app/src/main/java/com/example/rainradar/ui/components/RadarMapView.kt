@@ -15,6 +15,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.example.rainradar.data.DwdWmsClient
+import com.example.rainradar.data.RadarBitmapUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
@@ -41,13 +42,13 @@ private fun calculateMinZoom(context: Context, mapWidth: Int, mapHeight: Int): D
 
     // Lon constraint:
     // Z >= log2( (W * 360.0) / (256.0 * 17.0) )
-    val minZoomLon = Math.log((wDp * 360.0) / (256.0 * 17.0)) / Math.log(2.0)
+    val minZoomLon = Math.log((wDp * 360.0) / (256.0 * (DwdWmsClient.LON_EAST - DwdWmsClient.LON_WEST))) / Math.log(2.0)
 
     // Lat constraint:
     // delta_y = ln(tan(pi/4 + lat_N/2)) - ln(tan(pi/4 + lat_S/2))
     // Z >= log2( H * 2 * pi / (256.0 * delta_y) )
-    val latN = Math.toRadians(56.576107)
-    val latS = Math.toRadians(45.0)
+    val latN = Math.toRadians(DwdWmsClient.LAT_NORTH)
+    val latS = Math.toRadians(DwdWmsClient.LAT_SOUTH)
     val yN = Math.log(Math.tan(Math.PI / 4.0 + latN / 2.0))
     val yS = Math.log(Math.tan(Math.PI / 4.0 + latS / 2.0))
     val deltaY = yN - yS
@@ -58,50 +59,6 @@ private fun calculateMinZoom(context: Context, mapWidth: Int, mapHeight: Int): D
     return maxOf(3.0, minZoom)
 }
 
-private fun cleanRadarBitmap(bitmap: android.graphics.Bitmap) {
-    val width = bitmap.width
-    val height = bitmap.height
-    val pixels = IntArray(width * height)
-    bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-    
-    var modified = false
-    for (i in pixels.indices) {
-        val color = pixels[i]
-        val a = (color shr 24) and 0xFF
-        if (a == 0) continue
-        
-        val r = (color shr 16) and 0xFF
-        val g = (color shr 8) and 0xFF
-        val b = color and 0xFF
-        
-        val rf = r / 255.0f
-        val gf = g / 255.0f
-        val bf = b / 255.0f
-        
-        // 1. Gray background: R ≈ G ≈ B (within 0.03 of each other)
-        val isGray = (Math.abs(rf - gf) <= 0.03f && 
-                      Math.abs(rf - bf) <= 0.03f && 
-                      Math.abs(gf - bf) <= 0.03f)
-                      
-        // 2. Pink/magenta border detection
-        val minRB = minOf(rf, bf)
-        val isPink = (Math.abs(rf - bf) <= 0.19f) && 
-                     (minRB > 0.01f) && 
-                     (gf < minRB - 0.02f)
-                     
-        // 3. Blended boundary check
-        val isBlend = (minRB > 0.3f) && (gf > 0.05f)
-        
-        if (isGray || isPink || isBlend) {
-            pixels[i] = 0 // Transparent
-            modified = true
-        }
-    }
-    
-    if (modified && bitmap.isMutable) {
-        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
-    }
-}
 
 @Composable
 fun RadarMapView(
@@ -117,13 +74,25 @@ fun RadarMapView(
     val bitmapCache = remember { android.util.LruCache<String, android.graphics.Bitmap>(15) }
     var activeBitmapState by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
 
+    // Track the base time derived from frameTimes. When it changes (e.g. after
+    // the app resumes from background), evict the in-memory bitmap cache so
+    // stale decoded images are not served.
+    val currentBase = frameTimes.getOrNull(DwdWmsClient.PAST_FRAME_COUNT)
+    var lastSeenBase by remember { mutableStateOf<Instant?>(null) }
+    if (currentBase != null && currentBase != lastSeenBase) {
+        if (lastSeenBase != null) {
+            bitmapCache.evictAll()
+        }
+        lastSeenBase = currentBase
+    }
+
     LaunchedEffect(activeFrameIndex, frameTimes, isPreloading) {
         if (isPreloading || frameTimes.isEmpty()) {
             activeBitmapState = null
             return@LaunchedEffect
         }
         
-        val base = frameTimes.getOrNull(36) ?: DwdWmsClient.getRoundedBaseTime()
+        val base = frameTimes.getOrNull(DwdWmsClient.PAST_FRAME_COUNT) ?: DwdWmsClient.getRoundedBaseTime()
 
         withContext(Dispatchers.IO) {
             var targetIndex = -1
@@ -180,7 +149,7 @@ fun RadarMapView(
                 val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
                 if (decoded != null) {
                     if (!isActive) return@withContext
-                    cleanRadarBitmap(decoded)
+                    RadarBitmapUtils.cleanRadarBitmap(decoded)
                     
                     if (!isActive) return@withContext
                     bitmapCache.put(timeStr, decoded)
@@ -202,7 +171,7 @@ fun RadarMapView(
                     val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
                     if (decoded != null) {
                         if (!isActive) return@withContext
-                        cleanRadarBitmap(decoded)
+                        RadarBitmapUtils.cleanRadarBitmap(decoded)
                         
                         if (!isActive) return@withContext
                         bitmapCache.put(timeStr, decoded)
@@ -262,10 +231,10 @@ fun RadarMapView(
             map.setStyle("https://tiles.openfreemap.org/styles/liberty") { style ->
                 // Add the radar source and layer
                 val quad = LatLngQuad(
-                    LatLng(56.576107, 2.0),
-                    LatLng(56.576107, 19.0),
-                    LatLng(45.0, 19.0),
-                    LatLng(45.0, 2.0)
+                    LatLng(DwdWmsClient.LAT_NORTH, DwdWmsClient.LON_WEST),
+                    LatLng(DwdWmsClient.LAT_NORTH, DwdWmsClient.LON_EAST),
+                    LatLng(DwdWmsClient.LAT_SOUTH, DwdWmsClient.LON_EAST),
+                    LatLng(DwdWmsClient.LAT_SOUTH, DwdWmsClient.LON_WEST)
                 )
                 val emptyBmp = android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888)
                 val imageSource = ImageSource("radar-source", quad, emptyBmp)
@@ -330,36 +299,40 @@ fun RadarMapView(
                         val lonSpan = Math.abs(lonEast - lonWest)
                         val latSpan = Math.abs(latNorth - latSouth)
 
+                        val radarLonSpan = DwdWmsClient.LON_EAST - DwdWmsClient.LON_WEST
+                        val radarLonCenter = (DwdWmsClient.LON_WEST + DwdWmsClient.LON_EAST) / 2.0
+
                         var changed = false
                         // Longitude clamping / centering
-                        if (lonSpan >= 17.0) {
-                            if (Math.abs(newLon - 10.5) > 1e-5) {
-                                newLon = 10.5
+                        if (lonSpan >= radarLonSpan) {
+                            if (Math.abs(newLon - radarLonCenter) > 1e-5) {
+                                newLon = radarLonCenter
                                 changed = true
                             }
                         } else {
-                            if (lonWest < 2.0) {
-                                newLon += (2.0 - lonWest)
+                            if (lonWest < DwdWmsClient.LON_WEST) {
+                                newLon += (DwdWmsClient.LON_WEST - lonWest)
                                 changed = true
-                            } else if (lonEast > 19.0) {
-                                newLon -= (lonEast - 19.0)
+                            } else if (lonEast > DwdWmsClient.LON_EAST) {
+                                newLon -= (lonEast - DwdWmsClient.LON_EAST)
                                 changed = true
                             }
                         }
 
                         // Latitude clamping / centering
-                        val radarLatSpan = 56.576107 - 45.0
+                        val radarLatSpan = DwdWmsClient.LAT_NORTH - DwdWmsClient.LAT_SOUTH
+                        val radarLatCenter = (DwdWmsClient.LAT_SOUTH + DwdWmsClient.LAT_NORTH) / 2.0
                         if (latSpan >= radarLatSpan) {
-                            if (Math.abs(newLat - 50.7880535) > 1e-5) {
-                                newLat = 50.7880535
+                            if (Math.abs(newLat - radarLatCenter) > 1e-5) {
+                                newLat = radarLatCenter
                                 changed = true
                             }
                         } else {
-                            if (latNorth > 56.576107) {
-                                newLat -= (latNorth - 56.576107)
+                            if (latNorth > DwdWmsClient.LAT_NORTH) {
+                                newLat -= (latNorth - DwdWmsClient.LAT_NORTH)
                                 changed = true
-                            } else if (latSouth < 45.0) {
-                                newLat += (45.0 - latSouth)
+                            } else if (latSouth < DwdWmsClient.LAT_SOUTH) {
+                                newLat += (DwdWmsClient.LAT_SOUTH - latSouth)
                                 changed = true
                             }
                         }
