@@ -17,6 +17,7 @@ import androidx.work.WorkManager
 import com.example.rainradar.MainActivity
 import com.example.rainradar.R
 import com.example.rainradar.data.DwdWmsClient
+import com.example.rainradar.data.RadarBitmapUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -103,13 +104,13 @@ class RadarWidgetProvider : AppWidgetProvider() {
         var locationName = "Deutschland"
         var activeCoords: Pair<Int, Int>? = null
 
-        val fullWidth = 1920
-        val fullHeight = 2084
+        val fullWidth = DwdWmsClient.WMS_DEFAULT_WIDTH
+        val fullHeight = DwdWmsClient.WMS_DEFAULT_HEIGHT
 
         if (isPremium) {
             val base = DwdWmsClient.getRoundedBaseTime()
             val times = DwdWmsClient.generateCombinedFrameTimes(base)
-            val currentFrameTime = times.getOrNull(36) ?: base
+            val currentFrameTime = times.getOrNull(DwdWmsClient.PAST_FRAME_COUNT) ?: base
 
             // Download current frame if not available
             val currentFileReady = DwdWmsClient.isFrameReady(context, currentFrameTime, base) || 
@@ -125,7 +126,7 @@ class RadarWidgetProvider : AppWidgetProvider() {
                         }
                         val rawBmp = BitmapFactory.decodeFile(currentFile.absolutePath, opts)
                         if (rawBmp != null) {
-                            cleanRadarBitmap(rawBmp)
+                            RadarBitmapUtils.cleanRadarBitmap(rawBmp)
                             radarBitmap = rawBmp
                         }
                     } catch (e: Exception) {
@@ -146,7 +147,8 @@ class RadarWidgetProvider : AppWidgetProvider() {
                 var firstRainNearbyOffset: Int? = null
                 
                 // We download a subset of forecast frames to optimize data consumption
-                val forecastIndices = listOf(36, 39, 42, 45, 48, 51, 54, 57, 59)
+                val p = DwdWmsClient.PAST_FRAME_COUNT
+                val forecastIndices = listOf(p, p + 3, p + 6, p + 9, p + 12, p + 15, p + 18, p + 21, p + 23)
                 val timeOffsets = listOf(0, 15, 30, 45, 60, 75, 90, 105, 120)
                 
                 for (i in forecastIndices.indices) {
@@ -174,10 +176,10 @@ class RadarWidgetProvider : AppWidgetProvider() {
                                     // Check exact pixel for rain
                                     if (cpx in 0 until bmp.width && cpy in 0 until bmp.height) {
                                         val color = bmp.getPixel(cpx, cpy)
-                                        if (isRainColor(color)) {
+                                        if (RadarBitmapUtils.isRainColor(color)) {
                                             if (firstRainTimeOffset == null) {
                                                 firstRainTimeOffset = offsetMin
-                                                firstRainIntensity = getRainIntensityName(color)
+                                                firstRainIntensity = RadarBitmapUtils.getRainIntensityName(color)
                                             }
                                         }
                                     }
@@ -192,7 +194,7 @@ class RadarWidgetProvider : AppWidgetProvider() {
                                                 val ny = cpy + dy
                                                 if (nx in 0 until bmp.width && ny in 0 until bmp.height) {
                                                     val color = bmp.getPixel(nx, ny)
-                                                    if (isRainColor(color)) {
+                                                    if (RadarBitmapUtils.isRainColor(color)) {
                                                         foundNearby = true
                                                         break
                                                     }
@@ -415,87 +417,5 @@ class RadarWidgetProvider : AppWidgetProvider() {
         appWidgetManager.updateAppWidget(appWidgetId, views)
     }
 
-    private fun cleanRadarBitmap(bitmap: Bitmap) {
-        val width = bitmap.width
-        val height = bitmap.height
-        val pixels = IntArray(width * height)
-        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-        
-        var modified = false
-        for (i in pixels.indices) {
-            val color = pixels[i]
-            val a = (color shr 24) and 0xFF
-            if (a == 0) continue
-            
-            val r = (color shr 16) and 0xFF
-            val g = (color shr 8) and 0xFF
-            val b = color and 0xFF
-            
-            val rf = r / 255.0f
-            val gf = g / 255.0f
-            val bf = b / 255.0f
-            
-            // 1. Gray background: R ≈ G ≈ B (within 0.03)
-            val isGray = (Math.abs(rf - gf) <= 0.03f && 
-                          Math.abs(rf - bf) <= 0.03f && 
-                          Math.abs(gf - bf) <= 0.03f)
-                          
-            // 2. Pink/magenta border detection
-            val minRB = minOf(rf, bf)
-            val isPink = (Math.abs(rf - bf) <= 0.19f) && 
-                         (minRB > 0.01f) && 
-                         (gf < minRB - 0.02f)
-                         
-            // 3. Blended boundary check
-            val isBlend = (minRB > 0.3f) && (gf > 0.05f)
-            
-            if (isGray || isPink || isBlend) {
-                pixels[i] = 0 // Transparent
-                modified = true
-            }
-        }
-        
-        if (modified && bitmap.isMutable) {
-            bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
-        }
-    }
-
-    private fun isRainColor(color: Int): Boolean {
-        val a = (color shr 24) and 0xFF
-        if (a < 10) return false
-        
-        val r = (color shr 16) and 0xFF
-        val g = (color shr 8) and 0xFF
-        val b = color and 0xFF
-        
-        val rf = r / 255.0f
-        val gf = g / 255.0f
-        val bf = b / 255.0f
-        
-        val isGray = (Math.abs(rf - gf) <= 0.03f && 
-                      Math.abs(rf - bf) <= 0.03f && 
-                      Math.abs(gf - bf) <= 0.03f)
-                      
-        val minRB = minOf(rf, bf)
-        val isPink = (Math.abs(rf - bf) <= 0.19f) && 
-                     (minRB > 0.01f) && 
-                     (gf < minRB - 0.02f)
-                     
-        val isBlend = (minRB > 0.3f) && (gf > 0.05f)
-        
-        return !(isGray || isPink || isBlend)
-    }
-
-    private fun getRainIntensityName(color: Int): String {
-        val hsv = FloatArray(3)
-        Color.colorToHSV(color, hsv)
-        val hue = hsv[0]
-        return when {
-            hue in 260.0f..330.0f -> "Starkregen/Gewitter"
-            hue >= 330.0f || hue < 25.0f -> "Starker Regen"
-            hue in 25.0f..70.0f -> "Mäßiger Regen"
-            else -> "Leichter Regen"
-        }
-    }
     }
 }

@@ -13,7 +13,29 @@ import okhttp3.Request
 object DwdWmsClient {
     const val WMS_BASE_URL = "https://maps.dwd.de/geoserver/ows"
     const val WMS_LAYER = "dwd:Niederschlagsradar"
-    
+
+    // Frame layout constants
+    const val PAST_FRAME_COUNT = 36
+    const val TOTAL_FRAME_COUNT = 60
+    const val FRAME_INTERVAL_SECONDS = 300L   // 5 minutes
+    const val SAFETY_OFFSET_SECONDS = 600L    // 10 minutes
+
+    // WMS image dimensions
+    const val WMS_DEFAULT_WIDTH = 1920
+    const val WMS_DEFAULT_HEIGHT = 2084
+
+    // Radar geographic bounds (WGS84)
+    const val LAT_SOUTH = 45.0
+    const val LAT_NORTH = 56.576107
+    const val LON_WEST = 2.0
+    const val LON_EAST = 19.0
+
+    // EPSG:3857 bounding box
+    const val BBOX_X_MIN = 222638.98
+    const val BBOX_Y_MIN = 5621521.49
+    const val BBOX_X_MAX = 2115070.32
+    const val BBOX_Y_MAX = 7673967.65
+
     private val isoFormatter = DateTimeFormatter
         .ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
         .withZone(ZoneOffset.UTC)
@@ -30,9 +52,9 @@ object DwdWmsClient {
     fun getRoundedBaseTime(): Instant {
         val now = Instant.now()
         val epochSec = now.epochSecond
-        // 10-Minuten Safety-Offset (600s) – identisch mit der KDE Plasma Extension
+        // 10-Minuten Safety-Offset – identisch mit der KDE Plasma Extension
         // Verhindert, dass Frames angefragt werden, bevor der DWD sie bereitstellt
-        val roundedSec = ((epochSec - 600) / 300) * 300
+        val roundedSec = ((epochSec - SAFETY_OFFSET_SECONDS) / FRAME_INTERVAL_SECONDS) * FRAME_INTERVAL_SECONDS
         return Instant.ofEpochSecond(roundedSec)
     }
 
@@ -43,19 +65,16 @@ object DwdWmsClient {
      * Identisch mit der KDE Plasma Extension Logik
      */
     fun generateCombinedFrameTimes(base: Instant = getRoundedBaseTime()): List<Instant> {
-        val list = ArrayList<Instant>(60)
+        val list = ArrayList<Instant>(TOTAL_FRAME_COUNT)
         
-        val pastFrames = 36
-        val totalFrames = 60
-        
-        for (i in 0 until totalFrames) {
-            val instant = if (i < pastFrames) {
-                // Vergangene Frames: base - (pastFrames - i) * 5min
-                base.minusSeconds((pastFrames - i) * 5 * 60L)
+        for (i in 0 until TOTAL_FRAME_COUNT) {
+            val instant = if (i < PAST_FRAME_COUNT) {
+                // Vergangene Frames: base - (PAST_FRAME_COUNT - i) * 5min
+                base.minusSeconds((PAST_FRAME_COUNT - i) * FRAME_INTERVAL_SECONDS)
             } else {
-                // Vorhersage-Frames: base + (i - pastFrames) * 5min
-                // Frame 36 = base + 0 = "Jetzt"
-                base.plusSeconds((i - pastFrames) * 5 * 60L)
+                // Vorhersage-Frames: base + (i - PAST_FRAME_COUNT) * 5min
+                // Frame PAST_FRAME_COUNT = base + 0 = "Jetzt"
+                base.plusSeconds((i - PAST_FRAME_COUNT) * FRAME_INTERVAL_SECONDS)
             }
             list.add(instant)
         }
@@ -66,9 +85,9 @@ object DwdWmsClient {
     /**
      * Generates a WMS query URL for the full DWD bounding box.
      */
-    fun getBBoxWmsUrl(time: Instant, base: Instant = getRoundedBaseTime(), width: Int = 1920, height: Int = 2084): String {
+    fun getBBoxWmsUrl(time: Instant, base: Instant = getRoundedBaseTime(), width: Int = WMS_DEFAULT_WIDTH, height: Int = WMS_DEFAULT_HEIGHT): String {
         val timeStr = formatIsoTime(time)
-        val bbox = "222638.98,5621521.49,2115070.32,7673967.65"
+        val bbox = "$BBOX_X_MIN,$BBOX_Y_MIN,$BBOX_X_MAX,$BBOX_Y_MAX"
         val cb = if (time.epochSecond >= base.epochSecond) base.epochSecond else 0L
         return "$WMS_BASE_URL?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap" +
                 "&LAYERS=$WMS_LAYER" +
@@ -95,21 +114,10 @@ object DwdWmsClient {
             val baseStr = formatIsoTime(base)
             File(dir, "frame_${timeStr}_base_${baseStr}.png")
         } else {
-            val expectedFile = File(dir, "frame_$timeStr.png")
-            if (!expectedFile.exists()) {
-                val files = dir.listFiles()
-                if (files != null) {
-                    val prefix = "frame_${timeStr}_base_"
-                    for (file in files) {
-                        if (file.name.startsWith(prefix) && file.name.endsWith(".png")) {
-                            if (file.renameTo(expectedFile)) {
-                                break
-                            }
-                        }
-                    }
-                }
-            }
-            expectedFile
+            // Past/history frames use a simple canonical filename without base.
+            // Do NOT search for or rename old forecast files here — old forecasts
+            // are predictions, not actual observations, and must be re-downloaded.
+            File(dir, "frame_$timeStr.png")
         }
     }
 
@@ -152,17 +160,18 @@ object DwdWmsClient {
                             val baseStr = name.substring(firstBaseIndex + 6, name.length - 4)
                             
                             if (!activeTimesSet.contains(timeStr)) {
+                                // Time is no longer in the active frame list at all
                                 file.delete()
                             } else {
                                 val fileTime = Instant.parse(timeStr)
                                 if (fileTime.isBefore(currentBase)) {
-                                    val dest = File(dir, "frame_$timeStr.png")
-                                    if (!dest.exists()) {
-                                        file.renameTo(dest)
-                                    } else {
-                                        file.delete()
-                                    }
+                                    // This was a forecast file, but the time is now in the past.
+                                    // Delete it — forecast predictions must not be reused as
+                                    // historical observations. The actual observation will be
+                                    // re-downloaded on the next preload cycle.
+                                    file.delete()
                                 } else if (baseStr != currentBaseStr) {
+                                    // Forecast for current time window but with an outdated base → stale
                                     file.delete()
                                 }
                             }
@@ -280,10 +289,10 @@ object DwdWmsClient {
         val x = r * (lon * Math.PI / 180.0)
         val y = r * Math.log(Math.tan(Math.PI / 4.0 + (lat * Math.PI / 360.0)))
         
-        val xMin = 222638.98
-        val yMin = 5621521.49
-        val xMax = 2115070.32
-        val yMax = 7673967.65
+        val xMin = BBOX_X_MIN
+        val yMin = BBOX_Y_MIN
+        val xMax = BBOX_X_MAX
+        val yMax = BBOX_Y_MAX
         
         if (x !in xMin..xMax || y !in yMin..yMax) {
             return null // Outside DWD radar bounds

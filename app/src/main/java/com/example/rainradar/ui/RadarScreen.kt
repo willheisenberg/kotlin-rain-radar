@@ -93,14 +93,20 @@ fun RadarScreen(
     val productPrice by billingManager.productPrice.collectAsState()
     var showPremiumDialog by remember { mutableStateOf(initialShowBilling) }
 
-    // Observe App Lifecycle and reset to Now on ON_RESUME
+    // Observe App Lifecycle: reset to Now on ON_RESUME and stop playback on ON_PAUSE
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.refreshData(context, silent = true)
-                viewModel.setActiveFrameIndex(36)
-                billingManager.queryPurchases()
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    viewModel.refreshData(context, silent = true)
+                    viewModel.setActiveFrameIndex(DwdWmsClient.PAST_FRAME_COUNT)
+                    billingManager.queryPurchases()
+                }
+                Lifecycle.Event.ON_PAUSE -> {
+                    viewModel.stopPlayback()
+                }
+                else -> {}
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -131,7 +137,7 @@ fun RadarScreen(
 
     // Helper to validate if GPS location is within the radar's bounding box coverage
     fun isLocationInRadarBounds(lat: Double, lon: Double): Boolean {
-        return lat in 45.0..56.576107 && lon in 2.0..19.0
+        return lat in DwdWmsClient.LAT_SOUTH..DwdWmsClient.LAT_NORTH && lon in DwdWmsClient.LON_WEST..DwdWmsClient.LON_EAST
     }
 
     // Setup GPS & Network Location Updates
@@ -369,7 +375,7 @@ fun RadarScreen(
                                 .background(if (isPreloading) SurfaceBg.copy(alpha = 0.5f) else SurfaceBg)
                                 .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
                                 .clickable(enabled = !isPreloading) {
-                                    viewModel.setActiveFrameIndex(36)
+                                    viewModel.setActiveFrameIndex(DwdWmsClient.PAST_FRAME_COUNT)
                                 }
                                 .padding(horizontal = 12.dp),
                             contentAlignment = Alignment.Center
@@ -430,7 +436,7 @@ fun RadarScreen(
                         }
 
                         // Mode Badge (Top-Right under header)
-                        val isActiveForecast = activeFrameIndex >= 36
+                        val isActiveForecast = activeFrameIndex >= DwdWmsClient.PAST_FRAME_COUNT
                         Box(
                             modifier = Modifier
                                 .background(
@@ -457,51 +463,7 @@ fun RadarScreen(
                 exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
                 modifier = Modifier.align(Alignment.BottomEnd)
             ) {
-                Column(
-                    modifier = Modifier
-                        .padding(bottom = 150.dp, end = 12.dp)
-                        .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
-                        .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                        .padding(10.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "mm/h",
-                        color = TextSecondary,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    // Clean gradient representing radar intensity
-                    Box(
-                        modifier = Modifier
-                            .width(18.dp)
-                            .height(110.dp)
-                            .clip(RoundedCornerShape(3.dp))
-                            .background(
-                                Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color(0xFF8B008B), // Violet/Extreme
-                                        Color.Red,         // Heavy
-                                        Color.Yellow,      // Moderate
-                                        Color(0xFF22C55E), // Light
-                                        Color.Transparent  // None
-                                    )
-                                )
-                            )
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "stark",
-                        color = TextSecondary,
-                        fontSize = 9.sp
-                    )
-                    Text(
-                        text = "leicht",
-                        color = TextSecondary,
-                        fontSize = 9.sp
-                    )
-                }
+                RainIntensityLegend()
             }
 
             // ── Floating Location button (Bottom-Left above controller) ──
@@ -543,35 +505,10 @@ fun RadarScreen(
                 exit = fadeOut(),
                 modifier = Modifier.align(Alignment.Center)
             ) {
-                Column(
-                    modifier = Modifier
-                        .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
-                        .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                        .padding(horizontal = 24.dp, vertical = 20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    CircularProgressIndicator(
-                        progress = preloadProgress,
-                        color = AccentBlue,
-                        trackColor = BorderColor,
-                        strokeWidth = 4.dp,
-                        modifier = Modifier.size(48.dp)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "Lade Radar-Daten...",
-                        color = TextPrimary,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "${(preloadProgress * 100).toInt()}% geladen (${(preloadProgress * frameTimes.size).toInt()} / ${frameTimes.size} Frames)",
-                        color = TextSecondary,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
+                PreloadingOverlay(
+                    preloadProgress = preloadProgress,
+                    frameCount = frameTimes.size
+                )
             }
 
             // ── Bottom Playback & Slider Controller ──
@@ -587,7 +524,7 @@ fun RadarScreen(
                         .padding(12.dp)
                         .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
                         .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                        .padding(12.dp)
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -603,13 +540,30 @@ fun RadarScreen(
                         ),
                         shape = RoundedCornerShape(7.dp),
                         contentPadding = PaddingValues(0.dp),
-                        modifier = Modifier.size(38.dp)
+                        modifier = Modifier.size(46.dp)
                     ) {
-                        Text(
-                            text = if (isPreloading) "⏳" else if (isPlaying) "⏸" else "▶",
-                            color = Color.White,
-                            fontSize = 16.sp
-                        )
+                        if (isPreloading) {
+                            Text(
+                                text = "⏳",
+                                color = Color.White,
+                                fontSize = 20.sp
+                            )
+                        } else if (isPlaying) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(modifier = Modifier.size(width = 4.dp, height = 16.dp).background(Color.White, RoundedCornerShape(1.dp)))
+                                Box(modifier = Modifier.size(width = 4.dp, height = 16.dp).background(Color.White, RoundedCornerShape(1.dp)))
+                            }
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "Play",
+                                tint = Color.White,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.width(12.dp))
@@ -653,7 +607,7 @@ fun RadarScreen(
                             colors = SliderDefaults.colors(
                                 activeTrackColor = Color.Transparent,
                                 inactiveTrackColor = Color.Transparent,
-                                thumbColor = if (activeFrameIndex < 36) AccentGreen else AccentBlue,
+                                thumbColor = if (activeFrameIndex < DwdWmsClient.PAST_FRAME_COUNT) AccentGreen else AccentBlue,
                                 disabledActiveTrackColor = Color.Transparent,
                                 disabledInactiveTrackColor = Color.Transparent
                             ),
@@ -662,8 +616,8 @@ fun RadarScreen(
                                 SliderDefaults.Thumb(
                                     interactionSource = interactionSource,
                                     colors = SliderDefaults.colors(
-                                        thumbColor = if (activeFrameIndex < 36) AccentGreen else AccentBlue,
-                                        disabledThumbColor = (if (activeFrameIndex < 36) AccentGreen else AccentBlue).copy(alpha = 0.5f)
+                                        thumbColor = if (activeFrameIndex < DwdWmsClient.PAST_FRAME_COUNT) AccentGreen else AccentBlue,
+                                        disabledThumbColor = (if (activeFrameIndex < DwdWmsClient.PAST_FRAME_COUNT) AccentGreen else AccentBlue).copy(alpha = 0.5f)
                                     ),
                                     enabled = !isPreloading,
                                     thumbSize = DpSize(30.dp, 30.dp)
@@ -832,3 +786,86 @@ fun RadarScreen(
         }
     }
 }
+
+@Composable
+private fun RainIntensityLegend() {
+    Column(
+        modifier = Modifier
+            .padding(bottom = 150.dp, end = 12.dp)
+            .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+            .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+            .padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = "mm/h",
+            color = TextSecondary,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        // Clean gradient representing radar intensity
+        Box(
+            modifier = Modifier
+                .width(18.dp)
+                .height(110.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0xFF8B008B), // Violet/Extreme
+                            Color.Red,         // Heavy
+                            Color.Yellow,      // Moderate
+                            Color(0xFF22C55E), // Light
+                            Color.Transparent  // None
+                        )
+                    )
+                )
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "stark",
+            color = TextSecondary,
+            fontSize = 9.sp
+        )
+        Text(
+            text = "leicht",
+            color = TextSecondary,
+            fontSize = 9.sp
+        )
+    }
+}
+
+@Composable
+private fun PreloadingOverlay(preloadProgress: Float, frameCount: Int) {
+    Column(
+        modifier = Modifier
+            .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+            .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+            .padding(horizontal = 24.dp, vertical = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        CircularProgressIndicator(
+            progress = preloadProgress,
+            color = AccentBlue,
+            trackColor = BorderColor,
+            strokeWidth = 4.dp,
+            modifier = Modifier.size(48.dp)
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = "Lade Radar-Daten...",
+            color = TextPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = "${(preloadProgress * 100).toInt()}% geladen (${(preloadProgress * frameCount).toInt()} / $frameCount Frames)",
+            color = TextSecondary,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+    }
+}
+
