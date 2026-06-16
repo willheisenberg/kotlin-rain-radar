@@ -80,13 +80,19 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
 
     val preloadProgress by viewModel.preloadProgress.collectAsState()
 
-    // Observe App Lifecycle and reset to Now on ON_RESUME
+    // Observe App Lifecycle: reset to Now on ON_RESUME and stop playback on ON_PAUSE
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.refreshData(context, silent = true)
-                viewModel.setActiveFrameIndex(DwdWmsClient.PAST_FRAME_COUNT)
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    viewModel.refreshData(context, silent = true)
+                    viewModel.setActiveFrameIndex(DwdWmsClient.PAST_FRAME_COUNT)
+                }
+                Lifecycle.Event.ON_PAUSE -> {
+                    viewModel.stopPlayback()
+                }
+                else -> {}
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
