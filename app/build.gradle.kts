@@ -10,7 +10,7 @@ android {
     buildToolsVersion = "37.0.0"
 
     defaultConfig {
-        applicationId = "de.willheisenberg.rainradar"
+        applicationId = "de.willheisenberg.openrain"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
