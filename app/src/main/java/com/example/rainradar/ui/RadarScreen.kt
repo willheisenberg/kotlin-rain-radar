@@ -748,7 +748,7 @@ fun RadarScreen(
                                 shape = RoundedCornerShape(7.dp)
                             ) {
                                 Text(
-                                    text = "Freischalten (${productPrice ?: "0,49 €"})",
+                                    text = "Freischalten (${productPrice ?: "0,99 €"})",
                                     color = Color.White
                                 )
                             }
