@@ -475,7 +475,6 @@ class RadarWidgetProvider : AppWidgetProvider() {
                         canvas.drawText("OpenRain Premium", centerX, centerY + 160f, textPaint)
                     }
                 }
-                }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to build composite base map + radar image", e)
             }

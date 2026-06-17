@@ -358,12 +358,6 @@ fun RadarScreen(
                                     fontSize = 17.sp,
                                     fontWeight = FontWeight.Bold
                                 )
-                                Spacer(modifier = Modifier.width(5.dp))
-                                Text(
-                                    text = if (isPremium) "👑" else "☆",
-                                    fontSize = 13.sp,
-                                    color = if (isPremium) Color(0xFFFFD700) else TextSecondary
-                                )
                             }
                             Text(
                                 text = "© OpenStreetMap | DWD (CC BY 4.0)",
@@ -372,6 +366,26 @@ fun RadarScreen(
                             )
                         }
                         Spacer(modifier = Modifier.weight(1f))
+
+                        if (!isPremium) {
+                            Box(
+                                modifier = Modifier
+                                    .height(32.dp)
+                                    .clip(RoundedCornerShape(7.dp))
+                                    .background(AccentBlue)
+                                    .clickable { showPremiumDialog = true }
+                                    .padding(horizontal = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Get Premium",
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
 
                         // Jetzt button
                         Box(
@@ -779,9 +793,6 @@ fun RadarScreen(
                                         onClick = {}
                                     )
                             )
-                            if (isPremium) {
-                                Text(text = "👑", fontSize = 24.sp)
-                            }
                         }
                     },
                     text = {
