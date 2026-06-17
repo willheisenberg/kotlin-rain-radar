@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
+import org.maplibre.android.MapLibre
 import org.maplibre.android.snapshotter.MapSnapshotter
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
@@ -118,6 +119,7 @@ class RadarWidgetProvider : AppWidgetProvider() {
         return withContext(Dispatchers.Main) {
             suspendCancellableCoroutine { continuation ->
                 try {
+                    MapLibre.getInstance(context)
                     val options = MapSnapshotter.Options(480, 521)
                         .withCameraPosition(CameraPosition.Builder()
                             .target(LatLng(lat, lon))
@@ -444,7 +446,7 @@ class RadarWidgetProvider : AppWidgetProvider() {
         views.setTextViewText(R.id.widget_forecast_text, forecastText)
         views.setTextViewText(R.id.widget_subtext, "Standort: $locationName")
         
-        val timeFormatter = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault())
+        val timeFormatter = DateTimeFormatter.ofPattern("dd.MM. HH:mm").withZone(ZoneId.systemDefault())
         val updateTimeStr = timeFormatter.format(Instant.now())
         views.setTextViewText(R.id.widget_update_time, updateTimeStr)
         
