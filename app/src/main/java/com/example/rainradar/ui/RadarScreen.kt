@@ -25,7 +25,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -120,6 +122,10 @@ fun RadarScreen(
     var hasCenteredOnUser by remember { mutableStateOf(false) }
     var controlsVisible by remember { mutableStateOf(true) }
 
+    val prefs = remember { context.getSharedPreferences("rain_radar_prefs", Context.MODE_PRIVATE) }
+    var targetZoomLevel by remember { mutableStateOf(prefs.getFloat("target_zoom_level", 9.5f)) }
+    var showSettingsSlider by remember { mutableStateOf(false) }
+
     // Control status bar and navigation bar (system bars / Gestensteuerung) visibility
     LaunchedEffect(controlsVisible) {
         val activity = context as? Activity
@@ -193,7 +199,7 @@ fun RadarScreen(
         val loc = userLocation
         val map = mapViewInstance
         if (loc != null && map != null && !hasCenteredOnUser) {
-            map.animateCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(loc, 9.5), 1000)
+            map.animateCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(loc, targetZoomLevel.toDouble()), 1000)
             hasCenteredOnUser = true
         }
     }
@@ -389,22 +395,22 @@ fun RadarScreen(
                         }
 
                         Spacer(modifier = Modifier.width(8.dp))
-                        
+
                         Box(
                             modifier = Modifier
                                 .size(32.dp)
                                 .clip(RoundedCornerShape(7.dp))
-                                .background(if (isPreloading) SurfaceBg.copy(alpha = 0.5f) else SurfaceBg)
-                                .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                                .clickable(enabled = !isPreloading) {
-                                    viewModel.refreshData(context, force = true)
+                                .background(if (showSettingsSlider) AccentBlue.copy(alpha = 0.2f) else SurfaceBg)
+                                .border(1.dp, if (showSettingsSlider) AccentBlue else BorderColor, RoundedCornerShape(7.dp))
+                                .clickable {
+                                    showSettingsSlider = !showSettingsSlider
                                 },
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Aktualisieren",
-                                tint = if (isPreloading) TextSecondary else TextPrimary,
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Einstellungen",
+                                tint = if (showSettingsSlider) AccentBlue else TextPrimary,
                                 modifier = Modifier.size(18.dp)
                             )
                         }
@@ -466,6 +472,109 @@ fun RadarScreen(
                 RainIntensityLegend()
             }
 
+            // ── Zoom Settings Slider Panel (Left side) ──
+            AnimatedVisibility(
+                visible = controlsVisible && showSettingsSlider,
+                enter = slideInHorizontally(initialOffsetX = { -it }) + fadeIn(),
+                exit = slideOutHorizontally(targetOffsetX = { -it }) + fadeOut(),
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 12.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .width(64.dp)
+                        .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                        .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                        .padding(vertical = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Ansicht",
+                        color = TextPrimary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    val widthKm = 106000 / Math.pow(2.0, targetZoomLevel.toDouble())
+                    val displayKm = if (widthKm >= 1000) {
+                        "${Math.round(widthKm / 100.0) * 100} km"
+                    } else if (widthKm >= 100) {
+                        "${Math.round(widthKm / 10.0) * 10} km"
+                    } else {
+                        "${Math.round(widthKm)} km"
+                    }
+
+                    Text(
+                        text = displayKm,
+                        color = AccentBlue,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .height(320.dp)
+                            .width(48.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Slider(
+                            value = targetZoomLevel,
+                            onValueChange = {
+                                targetZoomLevel = it
+                            },
+                            onValueChangeFinished = {
+                                prefs.edit().putFloat("target_zoom_level", targetZoomLevel).apply()
+                            },
+                            valueRange = 5.0f..13.0f,
+                            colors = SliderDefaults.colors(
+                                activeTrackColor = AccentBlue,
+                                inactiveTrackColor = BorderColor,
+                                thumbColor = AccentBlue
+                            ),
+                            thumb = {
+                                val interactionSource = remember { MutableInteractionSource() }
+                                SliderDefaults.Thumb(
+                                    interactionSource = interactionSource,
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = AccentBlue
+                                    ),
+                                    thumbSize = DpSize(36.dp, 36.dp)
+                                )
+                            },
+                            modifier = Modifier
+                                .graphicsLayer {
+                                    rotationZ = -90f
+                                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
+                                }
+                                .requiredWidth(320.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(if (isPreloading) SurfaceBg.copy(alpha = 0.5f) else SurfaceBg)
+                            .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                            .clickable(enabled = !isPreloading) {
+                                viewModel.refreshData(context, force = true)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Cache leeren & aktualisieren",
+                            tint = if (isPreloading) TextSecondary else TextPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+
             // ── Floating Location button (Bottom-Left above controller) ──
             AnimatedVisibility(
                 visible = controlsVisible && userLocation != null,
@@ -479,7 +588,7 @@ fun RadarScreen(
                     onClick = {
                         userLocation?.let { loc ->
                             mapViewInstance?.let { map ->
-                                map.animateCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(loc, 9.5), 1000)
+                                map.animateCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(loc, targetZoomLevel.toDouble()), 1000)
                             }
                         }
                     },

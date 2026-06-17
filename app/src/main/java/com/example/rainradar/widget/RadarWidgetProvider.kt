@@ -22,6 +22,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import org.maplibre.android.MapLibre
+import org.maplibre.android.snapshotter.MapSnapshotter
+import org.maplibre.android.camera.CameraPosition
+import org.maplibre.android.geometry.LatLng
 import java.io.File
 import java.time.Instant
 import java.time.ZoneId
@@ -50,6 +56,13 @@ class RadarWidgetProvider : AppWidgetProvider() {
             }
             
             triggerImmediateUpdate(context)
+        } else if (intent.action == ACTION_TOGGLE_ZOOM) {
+            val prefs = context.getSharedPreferences("rain_radar_prefs", Context.MODE_PRIVATE)
+            val currentMode = prefs.getString(KEY_WIDGET_ZOOM_MODE, "germany") ?: "germany"
+            val newMode = if (currentMode == "germany") "location" else "germany"
+            prefs.edit().putString(KEY_WIDGET_ZOOM_MODE, newMode).apply()
+            
+            triggerImmediateUpdate(context)
         }
     }
 
@@ -60,10 +73,12 @@ class RadarWidgetProvider : AppWidgetProvider() {
 
     companion object {
         private const val ACTION_REFRESH = "com.example.rainradar.widget.ACTION_REFRESH"
+        private const val ACTION_TOGGLE_ZOOM = "com.example.rainradar.widget.ACTION_TOGGLE_ZOOM"
+        private const val KEY_WIDGET_ZOOM_MODE = "widget_zoom_mode"
         private const val TAG = "RadarWidgetProvider"
         private const val PERIODIC_WORK_NAME = "OpenRainWidgetPeriodicUpdate"
         private const val UNIQUE_ONE_TIME_WORK_NAME = "OpenRainWidgetOneTimeUpdate"
-
+ 
         fun schedulePeriodicUpdate(context: Context) {
             val workRequest = PeriodicWorkRequestBuilder<RadarWidgetWorker>(
                 15, TimeUnit.MINUTES
@@ -75,7 +90,7 @@ class RadarWidgetProvider : AppWidgetProvider() {
                 workRequest
             )
         }
-
+ 
         fun triggerImmediateUpdate(context: Context) {
             val workRequest = OneTimeWorkRequestBuilder<RadarWidgetWorker>().build()
             WorkManager.getInstance(context).enqueueUniqueWork(
@@ -84,10 +99,109 @@ class RadarWidgetProvider : AppWidgetProvider() {
                 workRequest
             )
         }
-
+ 
+        fun scheduleSingleImmediateUpdate(context: Context) {
+            triggerImmediateUpdate(context)
+        }
+ 
         fun cancelPeriodicUpdate(context: Context) {
             WorkManager.getInstance(context).cancelUniqueWork(PERIODIC_WORK_NAME)
         }
+
+    private suspend fun getMapSnapshot(
+        context: Context,
+        lat: Double,
+        lon: Double,
+        zoom: Float,
+        radarBitmap: Bitmap?,
+        hasLocation: Boolean
+    ): Bitmap? {
+        return withContext(Dispatchers.Main) {
+            suspendCancellableCoroutine { continuation ->
+                try {
+                    MapLibre.getInstance(context)
+                    val options = MapSnapshotter.Options(480, 521)
+                        .withCameraPosition(CameraPosition.Builder()
+                            .target(LatLng(lat, lon))
+                            .zoom(zoom.toDouble())
+                            .build()
+                        )
+                        .withStyle("https://tiles.openfreemap.org/styles/liberty")
+                    
+                    val snapshotter = MapSnapshotter(context, options)
+                    snapshotter.start({ snapshot ->
+                        val bmp = snapshot.bitmap
+                        if (bmp != null) {
+                            try {
+                                val mutableBmp = bmp.copy(Bitmap.Config.ARGB_8888, true)
+                                val canvas = Canvas(mutableBmp)
+                                
+                                // 1. Overlay radar bitmap in correct coordinates
+                                if (radarBitmap != null) {
+                                    val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG).apply {
+                                        alpha = 204 // 80% opacity
+                                    }
+                                    val tl = snapshot.pixelForLatLng(LatLng(DwdWmsClient.LAT_NORTH, DwdWmsClient.LON_WEST))
+                                    val tr = snapshot.pixelForLatLng(LatLng(DwdWmsClient.LAT_NORTH, DwdWmsClient.LON_EAST))
+                                    val br = snapshot.pixelForLatLng(LatLng(DwdWmsClient.LAT_SOUTH, DwdWmsClient.LON_EAST))
+                                    val bl = snapshot.pixelForLatLng(LatLng(DwdWmsClient.LAT_SOUTH, DwdWmsClient.LON_WEST))
+                                    
+                                    val destRect = RectF(
+                                        minOf(tl.x, bl.x),
+                                        minOf(tl.y, tr.y),
+                                        maxOf(tr.x, br.x),
+                                        maxOf(bl.y, br.y)
+                                    )
+                                    canvas.drawBitmap(radarBitmap, null, destRect, paint)
+                                }
+                                
+                                // 2. Draw user location blue dot in center of viewport
+                                if (hasLocation) {
+                                    val cpx = mutableBmp.width / 2f
+                                    val cpy = mutableBmp.height / 2f
+                                    
+                                    val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                        color = Color.parseColor("#803B82F6")
+                                        style = Paint.Style.FILL
+                                    }
+                                    canvas.drawCircle(cpx, cpy, 18f, glowPaint)
+                                    
+                                    val pinPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                        color = Color.parseColor("#3B82F6")
+                                        style = Paint.Style.FILL
+                                    }
+                                    canvas.drawCircle(cpx, cpy, 7f, pinPaint)
+                                    
+                                    val centerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                        color = Color.WHITE
+                                        style = Paint.Style.FILL
+                                    }
+                                    canvas.drawCircle(cpx, cpy, 2.5f, centerPaint)
+                                }
+                                
+                                continuation.resume(mutableBmp)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error copying or drawing snapshot", e)
+                                continuation.resume(null)
+                            }
+                        } else {
+                            continuation.resume(null)
+                        }
+                    }, { error ->
+                        Log.e(TAG, "MapSnapshotter error callback: $error")
+                        continuation.resume(null)
+                    })
+                    
+                    continuation.invokeOnCancellation {
+                        snapshotter.cancel()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed in MapSnapshotter setup", e)
+                    continuation.resume(null)
+                }
+            }
+        }
+    }
 
     internal suspend fun updateWidgetSuspended(context: Context, appWidgetManager: AppWidgetManager, appWidgetId: Int) {
         val views = RemoteViews(context.packageName, R.layout.radar_widget)
@@ -100,6 +214,7 @@ class RadarWidgetProvider : AppWidgetProvider() {
         val isPremium = com.example.rainradar.billing.BillingManager.isPremiumUser(context)
 
         var radarBitmap: Bitmap? = null
+        val zoomMode = prefs.getString(KEY_WIDGET_ZOOM_MODE, "germany") ?: "germany"
         var forecastText = "Regen-Übersicht"
         var locationName = "Deutschland"
         var activeCoords: Pair<Int, Int>? = null
@@ -133,6 +248,12 @@ class RadarWidgetProvider : AppWidgetProvider() {
                         Log.e(TAG, "Failed to decode current radar frame", e)
                     }
                 }
+            }
+
+            locationName = if (zoomMode == "location" && hasLocation) {
+                "Lokale Ansicht"
+            } else {
+                "Deutschland"
             }
 
             val coords = DwdWmsClient.getPixelCoords(lat, lon, fullWidth, fullHeight)
@@ -245,110 +366,119 @@ class RadarWidgetProvider : AppWidgetProvider() {
             locationName = "In-App freischalten"
         }
         
-        // Render combined map of Germany with translucent radar overlay or locked screen
         var combinedBmp: Bitmap? = null
-        try {
-            val baseMapBmp = BitmapFactory.decodeResource(context.resources, R.drawable.germany_map)
-            if (baseMapBmp != null) {
-                combinedBmp = Bitmap.createBitmap(baseMapBmp.width, baseMapBmp.height, Bitmap.Config.ARGB_8888)
-                val canvas = Canvas(combinedBmp)
-                canvas.drawBitmap(baseMapBmp, 0f, 0f, null)
-                baseMapBmp.recycle()
-                
-                if (isPremium) {
-                    // Overlay the radar frame on top with 80% opacity
-                    if (radarBitmap != null) {
-                        val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG).apply {
-                            alpha = 204 // 80% opacity
-                        }
-                        val srcRect = Rect(0, 0, radarBitmap.width, radarBitmap.height)
-                        val destRect = Rect(0, 0, combinedBmp.width, combinedBmp.height)
-                        canvas.drawBitmap(radarBitmap, srcRect, destRect, paint)
-                    }
+        
+        if (isPremium && zoomMode == "location" && hasLocation) {
+            val zoomLevel = prefs.getFloat("target_zoom_level", 9.5f)
+            combinedBmp = getMapSnapshot(context, lat, lon, zoomLevel, radarBitmap, hasLocation)
+        }
+        
+        if (combinedBmp == null) {
+            // Render combined map of Germany with translucent radar overlay or locked screen
+            try {
+                val baseMapBmp = BitmapFactory.decodeResource(context.resources, R.drawable.germany_map)
+                if (baseMapBmp != null) {
+                    combinedBmp = Bitmap.createBitmap(baseMapBmp.width, baseMapBmp.height, Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(combinedBmp)
+                    canvas.drawBitmap(baseMapBmp, 0f, 0f, null)
+                    baseMapBmp.recycle()
                     
-                    // Overlay user position marker
-                    if (activeCoords != null) {
-                        val scaleX = combinedBmp.width.toFloat() / fullWidth.toFloat()
-                        val scaleY = combinedBmp.height.toFloat() / fullHeight.toFloat()
-                        val cpx = activeCoords.first * scaleX
-                        val cpy = activeCoords.second * scaleY
+                    if (isPremium) {
+                        // Overlay the radar frame on top with 80% opacity
+                        if (radarBitmap != null) {
+                            val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG).apply {
+                                alpha = 204 // 80% opacity
+                            }
+                            val srcRect = Rect(0, 0, radarBitmap.width, radarBitmap.height)
+                            val destRect = Rect(0, 0, combinedBmp.width, combinedBmp.height)
+                            canvas.drawBitmap(radarBitmap, srcRect, destRect, paint)
+                        }
                         
-                        // Translucent blue glow circle
-                        val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            color = Color.parseColor("#803B82F6")
+                        // Overlay user position marker
+                        if (activeCoords != null) {
+                            val scaleX = combinedBmp.width.toFloat() / fullWidth.toFloat()
+                            val scaleY = combinedBmp.height.toFloat() / fullHeight.toFloat()
+                            val cpx = activeCoords.first * scaleX
+                            val cpy = activeCoords.second * scaleY
+                            
+                            // Translucent blue glow circle
+                            val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                color = Color.parseColor("#803B82F6")
+                                style = Paint.Style.FILL
+                            }
+                            canvas.drawCircle(cpx, cpy, 18f, glowPaint)
+                            
+                            // Solid blue pin circle
+                            val pinPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                color = Color.parseColor("#3B82F6")
+                                style = Paint.Style.FILL
+                            }
+                            canvas.drawCircle(cpx, cpy, 7f, pinPaint)
+                            
+                            // White center point
+                            val centerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                color = Color.WHITE
+                                style = Paint.Style.FILL
+                            }
+                            canvas.drawCircle(cpx, cpy, 2.5f, centerPaint)
+                        }
+                    } else {
+                        // Draw semi-translucent dark overlay
+                        val overlayPaint = Paint().apply {
+                            color = Color.parseColor("#C80F141C") // ~78% dark overlay
                             style = Paint.Style.FILL
                         }
-                        canvas.drawCircle(cpx, cpy, 18f, glowPaint)
+                        canvas.drawRect(0f, 0f, combinedBmp.width.toFloat(), combinedBmp.height.toFloat(), overlayPaint)
                         
-                        // Solid blue pin circle
-                        val pinPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            color = Color.parseColor("#3B82F6")
+                        val centerX = combinedBmp.width / 2f
+                        val centerY = combinedBmp.height / 2f - 40f
+                        
+                        // Padlock shackle (U-shape on top)
+                        val shacklePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.parseColor("#94A3B8")
+                            style = Paint.Style.STROKE
+                            strokeWidth = 14f
+                            strokeCap = Paint.Cap.ROUND
+                        }
+                        val shacklePath = Path().apply {
+                            moveTo(centerX - 40f, centerY)
+                            lineTo(centerX - 40f, centerY - 45f)
+                            arcTo(centerX - 40f, centerY - 85f, centerX + 40f, centerY - 5f, 180f, 180f, false)
+                            lineTo(centerX + 40f, centerY)
+                        }
+                        canvas.drawPath(shacklePath, shacklePaint)
+                        
+                        // Padlock body (rounded rectangle)
+                        val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.parseColor("#94A3B8")
                             style = Paint.Style.FILL
                         }
-                        canvas.drawCircle(cpx, cpy, 7f, pinPaint)
+                        val bodyRect = RectF(centerX - 60f, centerY, centerX + 60f, centerY + 90f)
+                        canvas.drawRoundRect(bodyRect, 18f, 18f, bodyPaint)
                         
-                        // White center point
-                        val centerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            color = Color.WHITE
+                        // Keyhole circle & keyhole bar
+                        val keyholePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.parseColor("#0F141C")
                             style = Paint.Style.FILL
                         }
-                        canvas.drawCircle(cpx, cpy, 2.5f, centerPaint)
+                        canvas.drawCircle(centerX, centerY + 35f, 12f, keyholePaint)
+                        val keyholeBar = RectF(centerX - 6f, centerY + 35f, centerX + 6f, centerY + 65f)
+                        canvas.drawRect(keyholeBar, keyholePaint)
+                        
+                        // "OpenRain Premium" Label text
+                        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.parseColor("#E2E8F0")
+                            textSize = 38f
+                            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                            textAlign = Paint.Align.CENTER
+                        }
+                        canvas.drawText("OpenRain Premium", centerX, centerY + 160f, textPaint)
                     }
-                } else {
-                    // Draw semi-translucent dark overlay
-                    val overlayPaint = Paint().apply {
-                        color = Color.parseColor("#C80F141C") // ~78% dark overlay
-                        style = Paint.Style.FILL
-                    }
-                    canvas.drawRect(0f, 0f, combinedBmp.width.toFloat(), combinedBmp.height.toFloat(), overlayPaint)
-                    
-                    val centerX = combinedBmp.width / 2f
-                    val centerY = combinedBmp.height / 2f - 40f
-                    
-                    // Padlock shackle (U-shape on top)
-                    val shacklePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = Color.parseColor("#94A3B8")
-                        style = Paint.Style.STROKE
-                        strokeWidth = 14f
-                        strokeCap = Paint.Cap.ROUND
-                    }
-                    val shacklePath = Path().apply {
-                        moveTo(centerX - 40f, centerY)
-                        lineTo(centerX - 40f, centerY - 45f)
-                        arcTo(centerX - 40f, centerY - 85f, centerX + 40f, centerY - 5f, 180f, 180f, false)
-                        lineTo(centerX + 40f, centerY)
-                    }
-                    canvas.drawPath(shacklePath, shacklePaint)
-                    
-                    // Padlock body (rounded rectangle)
-                    val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = Color.parseColor("#94A3B8")
-                        style = Paint.Style.FILL
-                    }
-                    val bodyRect = RectF(centerX - 60f, centerY, centerX + 60f, centerY + 90f)
-                    canvas.drawRoundRect(bodyRect, 18f, 18f, bodyPaint)
-                    
-                    // Keyhole circle & keyhole bar
-                    val keyholePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = Color.parseColor("#0F141C")
-                        style = Paint.Style.FILL
-                    }
-                    canvas.drawCircle(centerX, centerY + 35f, 12f, keyholePaint)
-                    val keyholeBar = RectF(centerX - 6f, centerY + 35f, centerX + 6f, centerY + 65f)
-                    canvas.drawRect(keyholeBar, keyholePaint)
-                    
-                    // "OpenRain Premium" Label text
-                    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = Color.parseColor("#E2E8F0")
-                        textSize = 38f
-                        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                        textAlign = Paint.Align.CENTER
-                    }
-                    canvas.drawText("OpenRain Premium", centerX, centerY + 160f, textPaint)
                 }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to build composite base map + radar image", e)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to build composite base map + radar image", e)
         }
         
         var finalBmp: Bitmap? = null
@@ -379,7 +509,7 @@ class RadarWidgetProvider : AppWidgetProvider() {
         views.setTextViewText(R.id.widget_forecast_text, forecastText)
         views.setTextViewText(R.id.widget_subtext, "Standort: $locationName")
         
-        val timeFormatter = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault())
+        val timeFormatter = DateTimeFormatter.ofPattern("dd.MM. HH:mm").withZone(ZoneId.systemDefault())
         val updateTimeStr = timeFormatter.format(Instant.now())
         views.setTextViewText(R.id.widget_update_time, updateTimeStr)
         
@@ -414,8 +544,27 @@ class RadarWidgetProvider : AppWidgetProvider() {
         }
         views.setOnClickPendingIntent(R.id.widget_btn_refresh, refreshPendingIntent)
         
+        // PendingIntent for clicking the zoom toggle button
+        val toggleZoomIntent = Intent(context, RadarWidgetProvider::class.java).apply {
+            action = ACTION_TOGGLE_ZOOM
+        }
+        val toggleZoomPendingIntent = PendingIntent.getBroadcast(
+            context,
+            0,
+            toggleZoomIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        views.setOnClickPendingIntent(R.id.widget_btn_zoom_toggle, toggleZoomPendingIntent)
+        
+        // Dynamically set zoom toggle icon based on mode
+        val toggleIconRes = if (zoomMode == "location") {
+            R.drawable.ic_location_pin
+        } else {
+            R.drawable.ic_map
+        }
+        views.setImageViewResource(R.id.widget_btn_zoom_toggle, toggleIconRes)
+        
         appWidgetManager.updateAppWidget(appWidgetId, views)
     }
-
-    }
+}
 }
