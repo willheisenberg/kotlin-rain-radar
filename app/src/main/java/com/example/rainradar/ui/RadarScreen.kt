@@ -644,6 +644,11 @@ fun RadarScreen(
             }
 
             if (showPremiumDialog) {
+                val isPurchased = remember(isPremium) {
+                    context.getSharedPreferences("rain_radar_prefs", Context.MODE_PRIVATE)
+                        .getBoolean("is_premium", false) || isPremiumDebug
+                }
+
                 AlertDialog(
                     onDismissRequest = { showPremiumDialog = false },
                     title = {
@@ -711,12 +716,21 @@ fun RadarScreen(
                             
                             Spacer(modifier = Modifier.height(16.dp))
 
+                            val statusText = when {
+                                isPurchased -> "Status: Premium freigeschaltet! Vielen Dank für deine Unterstützung. ❤️"
+                                isPremium -> {
+                                    val installTime = try {
+                                        context.packageManager.getPackageInfo(context.packageName, 0).firstInstallTime
+                                    } catch (e: Exception) { 0L }
+                                    val timeLeftMs = (24 * 60 * 60 * 1000L) - (System.currentTimeMillis() - installTime)
+                                    val hoursLeft = maxOf(0L, timeLeftMs / (1000 * 60 * 60))
+                                    "Status: Kostenlose Testphase aktiv (noch $hoursLeft Std. verbleibend)"
+                                }
+                                else -> "Status: Free-Version (Widget gesperrt)"
+                            }
+
                             Text(
-                                text = if (isPremium) {
-                                    "Status: Premium freigeschaltet! Vielen Dank für deine Unterstützung. ❤️"
-                                } else {
-                                    "Status: Free-Version (Widget gesperrt)"
-                                },
+                                text = statusText,
                                 color = if (isPremium) AccentGreen else TextSecondary,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 13.sp
@@ -734,7 +748,7 @@ fun RadarScreen(
                         }
                     },
                     confirmButton = {
-                        if (!isPremium) {
+                        if (!isPurchased) {
                             Button(
                                 onClick = {
                                     val activity = context as? Activity
@@ -765,7 +779,7 @@ fun RadarScreen(
                         }
                     },
                     dismissButton = {
-                        if (!isPremium) {
+                        if (!isPurchased) {
                             TextButton(onClick = { showPremiumDialog = false }) {
                                 Text(text = "Später", color = TextSecondary)
                             }

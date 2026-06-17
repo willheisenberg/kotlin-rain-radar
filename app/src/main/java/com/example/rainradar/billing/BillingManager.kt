@@ -28,6 +28,22 @@ class BillingManager private constructor(context: Context) {
                 INSTANCE ?: BillingManager(context.applicationContext).also { INSTANCE = it }
             }
         }
+
+        fun isPremiumUser(context: Context): Boolean {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            if (prefs.getBoolean(KEY_IS_PREMIUM, false) || prefs.getBoolean(KEY_IS_PREMIUM_DEBUG, false)) {
+                return true
+            }
+            return try {
+                val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+                val installTime = packageInfo.firstInstallTime
+                val currentTime = System.currentTimeMillis()
+                val trialDurationMs = 24 * 60 * 60 * 1000L // 24 hours
+                (currentTime - installTime) < trialDurationMs
+            } catch (e: Exception) {
+                false
+            }
+        }
     }
 
     private val appContext = context.applicationContext
@@ -95,7 +111,7 @@ class BillingManager private constructor(context: Context) {
     }
 
     private fun getIsPremiumLocal(): Boolean {
-        return prefs.getBoolean(KEY_IS_PREMIUM, false) || prefs.getBoolean(KEY_IS_PREMIUM_DEBUG, false)
+        return isPremiumUser(appContext)
     }
 
     fun queryPurchases() {

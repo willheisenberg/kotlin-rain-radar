@@ -97,7 +97,7 @@ class RadarWidgetProvider : AppWidgetProvider() {
         val lat = prefs.getFloat("last_lat", 51.1657f).toDouble()
         val lon = prefs.getFloat("last_lon", 10.4515f).toDouble()
         
-        val isPremium = prefs.getBoolean("is_premium", false) || prefs.getBoolean("is_premium_debug", false)
+        val isPremium = com.example.rainradar.billing.BillingManager.isPremiumUser(context)
 
         var radarBitmap: Bitmap? = null
         var forecastText = "Regen-Übersicht"
