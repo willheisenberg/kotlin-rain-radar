@@ -486,9 +486,9 @@ class RadarWidgetProvider : AppWidgetProvider() {
         
         // Dynamically set zoom toggle icon based on mode
         val toggleIconRes = if (zoomMode == "location") {
-            R.drawable.ic_map
-        } else {
             R.drawable.ic_location_pin
+        } else {
+            R.drawable.ic_map
         }
         views.setImageViewResource(R.id.widget_btn_zoom_toggle, toggleIconRes)
         
