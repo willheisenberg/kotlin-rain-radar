@@ -346,7 +346,7 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                         }
                         Spacer(modifier = Modifier.weight(1f))
 
-                        // Jetzt button
+                        // Now button
                         Box(
                             modifier = Modifier
                                 .height(32.dp)
@@ -360,7 +360,7 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "Jetzt",
+                                text = "Now",
                                 color = if (isPreloading) TextSecondary else TextPrimary,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
