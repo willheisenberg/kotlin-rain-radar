@@ -387,7 +387,7 @@ fun RadarScreen(
                             Spacer(modifier = Modifier.width(8.dp))
                         }
 
-                        // Jetzt button
+                        // Now button
                         Box(
                             modifier = Modifier
                                 .height(32.dp)
