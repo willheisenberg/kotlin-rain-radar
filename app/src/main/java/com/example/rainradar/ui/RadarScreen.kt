@@ -401,7 +401,7 @@ fun RadarScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "Jetzt",
+                                text = "Now",
                                 color = if (isPreloading) TextSecondary else TextPrimary,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
