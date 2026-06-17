@@ -368,27 +368,6 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                         }
 
                         Spacer(modifier = Modifier.width(8.dp))
-                        
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(RoundedCornerShape(7.dp))
-                                .background(if (isPreloading) SurfaceBg.copy(alpha = 0.5f) else SurfaceBg)
-                                .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                                .clickable(enabled = !isPreloading) {
-                                    viewModel.refreshData(context, force = true)
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Aktualisieren",
-                                tint = if (isPreloading) TextSecondary else TextPrimary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(8.dp))
 
                         Box(
                             modifier = Modifier
@@ -543,6 +522,27 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
                                 }
                                 .requiredWidth(320.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(if (isPreloading) SurfaceBg.copy(alpha = 0.5f) else SurfaceBg)
+                            .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                            .clickable(enabled = !isPreloading) {
+                                viewModel.refreshData(context, force = true)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Cache leeren & aktualisieren",
+                            tint = if (isPreloading) TextSecondary else TextPrimary,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
