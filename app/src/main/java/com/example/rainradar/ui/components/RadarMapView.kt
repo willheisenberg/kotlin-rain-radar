@@ -273,6 +273,9 @@ fun RadarMapView(
 
             // Keep min zoom and pan boundaries restricted dynamically depending on viewport/screen size
             var isClamping = false
+            var isInternalClamping = false
+            var isGestureMovement = false
+
             fun clampMap() {
                 if (isClamping) return
                 val w = mapView.width
@@ -282,7 +285,9 @@ fun RadarMapView(
                     map.setMinZoomPreference(minZoom)
                     if (map.cameraPosition.zoom < minZoom) {
                         isClamping = true
+                        isInternalClamping = true
                         map.moveCamera(CameraUpdateFactory.zoomTo(minZoom))
+                        isInternalClamping = false
                         isClamping = false
                     }
                     
@@ -339,13 +344,27 @@ fun RadarMapView(
 
                         if (changed) {
                             isClamping = true
+                            isInternalClamping = true
                             map.moveCamera(CameraUpdateFactory.newLatLng(LatLng(newLat, newLon)))
+                            isInternalClamping = false
                             isClamping = false
                         }
                 }
             }
 
+            map.addOnCameraMoveStartedListener { reason ->
+                if (!isInternalClamping) {
+                    isGestureMovement = (reason == org.maplibre.android.maps.MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE)
+                }
+            }
+
             map.addOnCameraMoveListener {
+                if (isGestureMovement) {
+                    clampMap()
+                }
+            }
+
+            map.addOnCameraIdleListener {
                 clampMap()
             }
 
