@@ -370,21 +370,23 @@ fun RadarScreen(
                         if (!isPremium) {
                             Box(
                                 modifier = Modifier
-                                    .height(32.dp)
-                                    .clip(RoundedCornerShape(7.dp))
+                                    .height(26.dp)
+                                    .clip(RoundedCornerShape(6.dp))
                                     .background(AccentBlue)
                                     .clickable { showPremiumDialog = true }
-                                    .padding(horizontal = 12.dp),
+                                    .padding(horizontal = 8.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "Get Premium",
+                                    text = "Premium",
                                     color = Color.White,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
                         }
 
                         // Now button
@@ -397,14 +399,16 @@ fun RadarScreen(
                                 .clickable(enabled = !isPreloading) {
                                     viewModel.setActiveFrameIndex(DwdWmsClient.PAST_FRAME_COUNT)
                                 }
-                                .padding(horizontal = 12.dp),
+                                .padding(horizontal = 10.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = "Now",
                                 color = if (isPreloading) TextSecondary else TextPrimary,
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
 
