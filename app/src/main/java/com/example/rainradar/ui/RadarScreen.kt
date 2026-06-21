@@ -140,6 +140,15 @@ fun RadarScreen(
     val screenHeight = configuration.screenHeightDp.dp
     val sliderHeight = (screenHeight - 460.dp).coerceIn(160.dp, 320.dp)
 
+    // Automatically hide controls when preloading starts, and show when it finishes
+    LaunchedEffect(isPreloading) {
+        if (isPreloading) {
+            controlsVisible = false
+        } else {
+            controlsVisible = true
+        }
+    }
+
     // Control status bar and navigation bar (system bars / Gestensteuerung) visibility
     LaunchedEffect(controlsVisible) {
         val activity = context as? Activity
@@ -304,7 +313,9 @@ fun RadarScreen(
                 isPreloading = isPreloading,
                 modifier = Modifier.fillMaxSize(),
                 onMapClick = {
-                    controlsVisible = !controlsVisible
+                    if (!isPreloading) {
+                        controlsVisible = !controlsVisible
+                    }
                 },
                 onMapReady = { mapView ->
                     mapViewInstance = mapView
@@ -313,7 +324,7 @@ fun RadarScreen(
 
             // ── Status Bar Scrim Overlay ──
             AnimatedVisibility(
-                visible = controlsVisible,
+                visible = controlsVisible && !isPreloading,
                 enter = fadeIn(),
                 exit = fadeOut()
             ) {
@@ -339,7 +350,7 @@ fun RadarScreen(
 
             // ── Top UI Control Panel (Header & Badges) ──
             AnimatedVisibility(
-                visible = controlsVisible,
+                visible = controlsVisible && !isPreloading,
                 enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
                 exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
                 modifier = Modifier.align(Alignment.TopCenter)
@@ -408,9 +419,9 @@ fun RadarScreen(
                             modifier = Modifier
                                 .height(32.dp)
                                 .clip(RoundedCornerShape(7.dp))
-                                .background(if (isPreloading) SurfaceBg.copy(alpha = 0.5f) else SurfaceBg)
+                                .background(SurfaceBg)
                                 .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                                .clickable(enabled = !isPreloading) {
+                                .clickable {
                                     viewModel.setActiveFrameIndex(DwdWmsClient.PAST_FRAME_COUNT)
                                 }
                                 .padding(horizontal = 10.dp),
@@ -418,7 +429,7 @@ fun RadarScreen(
                         ) {
                             Text(
                                 text = "Now",
-                                color = if (isPreloading) TextSecondary else TextPrimary,
+                                color = TextPrimary,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
@@ -496,7 +507,7 @@ fun RadarScreen(
 
             // ── Styled Rain Intensity Legend (Bottom-Right above controller) ──
             AnimatedVisibility(
-                visible = controlsVisible,
+                visible = controlsVisible && !isPreloading,
                 enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
                 exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
                 modifier = Modifier.align(Alignment.BottomEnd)
@@ -506,7 +517,7 @@ fun RadarScreen(
 
             // ── Zoom Settings Slider Panel (Left side) ──
             AnimatedVisibility(
-                visible = controlsVisible && showSettingsSlider,
+                visible = controlsVisible && !isPreloading && showSettingsSlider,
                 enter = slideInHorizontally(initialOffsetX = { -it }) + fadeIn(),
                 exit = slideOutHorizontally(targetOffsetX = { -it }) + fadeOut(),
                 modifier = Modifier
@@ -574,9 +585,9 @@ fun RadarScreen(
                         modifier = Modifier
                             .size(36.dp)
                             .clip(RoundedCornerShape(7.dp))
-                            .background(if (isPreloading) SurfaceBg.copy(alpha = 0.5f) else SurfaceBg)
+                            .background(SurfaceBg)
                             .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                            .clickable(enabled = !isPreloading) {
+                            .clickable {
                                 viewModel.refreshData(context, force = true)
                             },
                         contentAlignment = Alignment.Center
@@ -584,7 +595,7 @@ fun RadarScreen(
                         Icon(
                             imageVector = Icons.Default.Refresh,
                             contentDescription = "Cache leeren & aktualisieren",
-                            tint = if (isPreloading) TextSecondary else TextPrimary,
+                            tint = TextPrimary,
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -593,7 +604,7 @@ fun RadarScreen(
 
             // ── Floating Location button (Bottom-Left above controller) ──
             AnimatedVisibility(
-                visible = controlsVisible && userLocation != null,
+                visible = controlsVisible && !isPreloading && userLocation != null,
                 enter = slideInHorizontally(initialOffsetX = { -it }) + fadeIn(),
                 exit = slideOutHorizontally(targetOffsetX = { -it }) + fadeOut(),
                 modifier = Modifier
@@ -638,7 +649,7 @@ fun RadarScreen(
 
             // ── Bottom Playback & Slider Controller ──
             AnimatedVisibility(
-                visible = controlsVisible,
+                visible = controlsVisible && !isPreloading,
                 enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                 exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
                 modifier = Modifier.align(Alignment.BottomCenter)
@@ -658,11 +669,9 @@ fun RadarScreen(
                     // Play/Pause button
                     Button(
                         onClick = { viewModel.togglePlayback() },
-                        enabled = !isPreloading,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (isPlaying) Color(0xFFEF4444) else AccentBlue,
-                            disabledContainerColor = AccentBlue.copy(alpha = 0.4f),
-                            disabledContentColor = Color.White.copy(alpha = 0.5f)
+                            contentColor = Color.White
                         ),
                         shape = RoundedCornerShape(7.dp),
                         contentPadding = PaddingValues(0.dp),
@@ -721,25 +730,20 @@ fun RadarScreen(
                         Slider(
                             value = activeFrameIndex.toFloat().coerceIn(0f, maxOf(0.1f, sliderMax)),
                             onValueChange = { viewModel.setActiveFrameIndex(it.toInt()) },
-                            enabled = !isPreloading,
                             valueRange = 0f..maxOf(0.1f, sliderMax),
                             steps = maxOf(0, frameTimes.size - 2),
                             colors = SliderDefaults.colors(
                                 activeTrackColor = Color.Transparent,
                                 inactiveTrackColor = Color.Transparent,
-                                thumbColor = if (activeFrameIndex < DwdWmsClient.PAST_FRAME_COUNT) AccentGreen else AccentBlue,
-                                disabledActiveTrackColor = Color.Transparent,
-                                disabledInactiveTrackColor = Color.Transparent
+                                thumbColor = if (activeFrameIndex < DwdWmsClient.PAST_FRAME_COUNT) AccentGreen else AccentBlue
                             ),
                             interactionSource = interactionSource,
                             thumb = {
                                 SliderDefaults.Thumb(
                                     interactionSource = interactionSource,
                                     colors = SliderDefaults.colors(
-                                        thumbColor = if (activeFrameIndex < DwdWmsClient.PAST_FRAME_COUNT) AccentGreen else AccentBlue,
-                                        disabledThumbColor = (if (activeFrameIndex < DwdWmsClient.PAST_FRAME_COUNT) AccentGreen else AccentBlue).copy(alpha = 0.5f)
+                                        thumbColor = if (activeFrameIndex < DwdWmsClient.PAST_FRAME_COUNT) AccentGreen else AccentBlue
                                     ),
-                                    enabled = !isPreloading,
                                     thumbSize = DpSize(30.dp, 30.dp),
                                     modifier = Modifier.border(2.dp, Color.White, CircleShape)
                                 )
