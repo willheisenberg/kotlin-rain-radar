@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
@@ -45,6 +46,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.rainradar.data.DwdWmsClient
 import com.example.rainradar.ui.components.RadarMapView
+import com.example.rainradar.ui.components.VerticalSlider
+import androidx.compose.animation.core.animateDpAsState
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 import java.time.Instant
@@ -65,6 +68,14 @@ fun formatLocalTimeStr(instant: Instant?): String {
     if (instant == null) return "–"
     val formatter = DateTimeFormatter
         .ofPattern("EEE, dd.MM. HH:mm", Locale.GERMAN)
+        .withZone(ZoneId.systemDefault())
+    return formatter.format(instant)
+}
+
+fun formatLocalTimeOnly(instant: Instant?): String {
+    if (instant == null) return "–"
+    val formatter = DateTimeFormatter
+        .ofPattern("HH:mm", Locale.GERMAN)
         .withZone(ZoneId.systemDefault())
     return formatter.format(instant)
 }
@@ -111,6 +122,10 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
     val prefs = remember { context.getSharedPreferences("rain_radar_prefs", Context.MODE_PRIVATE) }
     var targetZoomLevel by remember { mutableStateOf(prefs.getFloat("target_zoom_level", 9.5f)) }
     var showSettingsSlider by remember { mutableStateOf(false) }
+
+    val configuration = LocalConfiguration.current
+    val screenHeight = configuration.screenHeightDp.dp
+    val sliderHeight = (screenHeight - 460.dp).coerceIn(160.dp, 320.dp)
 
     // Control status bar and navigation bar (system bars / Gestensteuerung) visibility
     LaunchedEffect(controlsVisible) {
@@ -451,12 +466,13 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                 enter = slideInHorizontally(initialOffsetX = { -it }) + fadeIn(),
                 exit = slideOutHorizontally(targetOffsetX = { -it }) + fadeOut(),
                 modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .padding(start = 12.dp)
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(start = 12.dp, top = 120.dp)
             ) {
                 Column(
                     modifier = Modifier
-                        .width(64.dp)
+                        .width(53.dp)
                         .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
                         .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
                         .padding(vertical = 12.dp),
@@ -488,11 +504,11 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
 
                     Box(
                         modifier = Modifier
-                            .height(320.dp)
+                            .height(sliderHeight)
                             .width(48.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Slider(
+                        VerticalSlider(
                             value = targetZoomLevel,
                             onValueChange = {
                                 targetZoomLevel = it
@@ -501,27 +517,10 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                                 prefs.edit().putFloat("target_zoom_level", targetZoomLevel).apply()
                             },
                             valueRange = 5.0f..13.0f,
-                            colors = SliderDefaults.colors(
-                                activeTrackColor = AccentBlue,
-                                inactiveTrackColor = BorderColor,
-                                thumbColor = AccentBlue
-                            ),
-                            thumb = {
-                                val interactionSource = remember { MutableInteractionSource() }
-                                SliderDefaults.Thumb(
-                                    interactionSource = interactionSource,
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = AccentBlue
-                                    ),
-                                    thumbSize = DpSize(36.dp, 36.dp)
-                                )
-                            },
-                            modifier = Modifier
-                                .graphicsLayer {
-                                    rotationZ = -90f
-                                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
-                                }
-                                .requiredWidth(320.dp)
+                            modifier = Modifier.fillMaxSize(),
+                            trackColor = BorderColor,
+                            activeTrackColor = AccentBlue,
+                            thumbColor = AccentBlue
                         )
                     }
 
@@ -618,19 +617,14 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                         enabled = !isPreloading,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (isPlaying) Color(0xFFEF4444) else AccentBlue,
-                            disabledContainerColor = SurfaceBg.copy(alpha = 0.5f)
+                            disabledContainerColor = AccentBlue.copy(alpha = 0.4f),
+                            disabledContentColor = Color.White.copy(alpha = 0.5f)
                         ),
                         shape = RoundedCornerShape(7.dp),
                         contentPadding = PaddingValues(0.dp),
                         modifier = Modifier.size(46.dp)
                     ) {
-                        if (isPreloading) {
-                            Text(
-                                text = "⏳",
-                                color = Color.White,
-                                fontSize = 20.sp
-                            )
-                        } else if (isPlaying) {
+                        if (isPlaying) {
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -702,7 +696,8 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                                         disabledThumbColor = (if (activeFrameIndex < DwdWmsClient.PAST_FRAME_COUNT) AccentGreen else AccentBlue).copy(alpha = 0.5f)
                                     ),
                                     enabled = !isPreloading,
-                                    thumbSize = DpSize(30.dp, 30.dp)
+                                    thumbSize = DpSize(30.dp, 30.dp),
+                                    modifier = Modifier.border(2.dp, Color.White, CircleShape)
                                 )
                             },
                             modifier = Modifier.fillMaxWidth()
@@ -714,7 +709,7 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                     // Local time readout
                     Text(
                         text = if (frameTimes.isNotEmpty() && activeFrameIndex in frameTimes.indices) {
-                            formatLocalTimeStr(frameTimes[activeFrameIndex]).replace(".*, ".toRegex(), "")
+                            formatLocalTimeOnly(frameTimes[activeFrameIndex])
                         } else "–",
                         color = TextPrimary,
                         fontSize = 12.sp,
