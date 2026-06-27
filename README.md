@@ -92,10 +92,10 @@ cd server
 
 ### Connecting the App to the Server
 
-1. Open the file [DwdWmsClient.kt](file:///home/will/ownProjects/kotlin-rain-radar/app/src/main/java/com/example/rainradar/data/DwdWmsClient.kt) in Android Studio.
-2. Change the value of `PROXY_URL` to the IP address or domain of your server:
-   ```kotlin
-   const val PROXY_URL = "http://YOUR_SERVER_IP:8080/radar"
+1. Open the file `local.properties` at the root of the project.
+2. Add or modify the `proxy.url` property with the IP address or domain of your server:
+   ```properties
+   proxy.url="https://your-domain.com/radar"
    ```
-3. *(Note: To disable the proxy and connect the app directly to the DWD server again, simply set `PROXY_URL` to an empty string `""`)*.
-4. Rebuild the APK (see the "Building the APK" section) and install it on your device.
+3. *(Note: To disable the proxy and connect the app directly to the DWD server again, simply set the property to an empty string `proxy.url=""` or delete it)*.
+4. Rebuild the APK (see the "Building the APK" section) and install it on your device. The compiler will automatically inject this URL during build time.

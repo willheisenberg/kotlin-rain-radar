@@ -1,7 +1,22 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+}
+
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        localPropertiesFile.inputStream().use { load(it) }
+    }
+}
+val rawProxyUrl = localProperties.getProperty("proxy.url") ?: "http://10.0.2.2:8080/radar"
+val formattedProxyUrl = if (rawProxyUrl.startsWith("\"") && rawProxyUrl.endsWith("\"")) {
+    rawProxyUrl
+} else {
+    "\"$rawProxyUrl\""
 }
 
 android {
@@ -11,6 +26,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.rainradar"
+        buildConfigField("String", "PROXY_URL", formattedProxyUrl)
         minSdk = 26
         targetSdk = 35
         versionCode = 1
@@ -40,6 +56,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {

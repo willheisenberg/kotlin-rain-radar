@@ -15,7 +15,7 @@ object DwdWmsClient {
     const val WMS_LAYER = "dwd:Niederschlagsradar"
     
     // Set to empty string "" to bypass proxy and fetch directly from DWD
-    const val PROXY_URL = "http://10.0.2.2:8080/radar"
+    val PROXY_URL = com.example.rainradar.BuildConfig.PROXY_URL
 
     // Frame layout constants
     const val PAST_FRAME_COUNT = 36
