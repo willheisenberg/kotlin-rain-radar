@@ -149,7 +149,9 @@ fun RadarMapView(
                 val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
                 if (decoded != null) {
                     if (!isActive) return@withContext
-                    RadarBitmapUtils.cleanRadarBitmap(decoded)
+                    if (!DwdWmsClient.isWebpFile(file)) {
+                        RadarBitmapUtils.cleanRadarBitmap(decoded)
+                    }
                     
                     if (!isActive) return@withContext
                     bitmapCache.put(timeStr, decoded)
@@ -171,7 +173,9 @@ fun RadarMapView(
                     val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
                     if (decoded != null) {
                         if (!isActive) return@withContext
-                        RadarBitmapUtils.cleanRadarBitmap(decoded)
+                        if (!DwdWmsClient.isWebpFile(file)) {
+                            RadarBitmapUtils.cleanRadarBitmap(decoded)
+                        }
                         
                         if (!isActive) return@withContext
                         bitmapCache.put(timeStr, decoded)

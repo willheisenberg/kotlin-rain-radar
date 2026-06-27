@@ -231,7 +231,9 @@ class RadarWidgetProvider : AppWidgetProvider() {
                     }
                     val rawBmp = BitmapFactory.decodeFile(currentFile.absolutePath, opts)
                     if (rawBmp != null) {
-                        RadarBitmapUtils.cleanRadarBitmap(rawBmp)
+                        if (!DwdWmsClient.isWebpFile(currentFile)) {
+                            RadarBitmapUtils.cleanRadarBitmap(rawBmp)
+                        }
                         radarBitmap = rawBmp
                     }
                 } catch (e: Exception) {
