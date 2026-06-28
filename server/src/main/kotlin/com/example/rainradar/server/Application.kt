@@ -7,6 +7,7 @@ import io.ktor.server.netty.*
 import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import kotlinx.coroutines.*
 import org.slf4j.LoggerFactory
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
@@ -43,6 +44,18 @@ fun Application.module() {
         exception<Throwable> { call, cause ->
             logger.error("Internal Server Error: ${cause.message}", cause)
             call.respondText(text = "500 Internal Server Error: ${cause.message}", status = HttpStatusCode.InternalServerError)
+        }
+    }
+
+    launch(Dispatchers.IO) {
+        logger.info("Starting background radar pre-caching loop...")
+        while (isActive) {
+            try {
+                preCacheRadarFrames()
+            } catch (e: Exception) {
+                logger.error("Error in background pre-caching loop: ${e.message}", e)
+            }
+            delay(60000) // check every minute
         }
     }
 
@@ -248,4 +261,133 @@ private fun compressToWebP(image: BufferedImage): ByteArray {
     writer.dispose()
     
     return outputStream.toByteArray()
+}
+
+private const val PAST_FRAME_COUNT = 36
+private const val TOTAL_FRAME_COUNT = 60
+private const val FRAME_INTERVAL_SECONDS = 300L   // 5 minutes
+private const val SAFETY_OFFSET_SECONDS = 600L    // 10 minutes
+
+private fun getRoundedBaseTime(): Instant {
+    val now = Instant.now()
+    val epochSec = now.epochSecond
+    val roundedSec = ((epochSec - SAFETY_OFFSET_SECONDS) / FRAME_INTERVAL_SECONDS) * FRAME_INTERVAL_SECONDS
+    return Instant.ofEpochSecond(roundedSec)
+}
+
+private fun generateCombinedFrameTimes(base: Instant): List<Instant> {
+    val list = ArrayList<Instant>(TOTAL_FRAME_COUNT)
+    for (i in 0 until TOTAL_FRAME_COUNT) {
+        val instant = if (i < PAST_FRAME_COUNT) {
+            base.minusSeconds((PAST_FRAME_COUNT - i) * FRAME_INTERVAL_SECONDS)
+        } else {
+            base.plusSeconds((i - PAST_FRAME_COUNT) * FRAME_INTERVAL_SECONDS)
+        }
+        list.add(instant)
+    }
+    return list
+}
+
+private fun cleanOldDiskCache(oldestAllowed: Instant, activeTimes: List<Instant>, currentBase: Instant) {
+    if (!cacheDir.exists() || !cacheDir.isDirectory) return
+    val files = cacheDir.listFiles() ?: return
+    
+    val activeTimesSet = activeTimes.map { it.toString() }.toSet()
+    val currentBaseStr = currentBase.toString()
+    
+    for (file in files) {
+        val name = file.name
+        if (!name.startsWith("frame_") || !name.endsWith(".webp")) {
+            continue
+        }
+        
+        try {
+            if (name.contains("_base_")) {
+                val firstBaseIndex = name.indexOf("_base_")
+                if (firstBaseIndex != -1) {
+                    val timeStr = name.substring(6, firstBaseIndex)
+                    val baseStr = name.substring(firstBaseIndex + 6, name.length - 15) // removes "_1920x2084.webp"
+                    
+                    if (!activeTimesSet.contains(timeStr)) {
+                        file.delete()
+                    } else {
+                        val fileTime = Instant.parse(timeStr)
+                        if (fileTime.isBefore(currentBase)) {
+                            file.delete()
+                        } else if (baseStr != currentBaseStr) {
+                            file.delete()
+                        }
+                    }
+                } else {
+                    file.delete()
+                }
+            } else {
+                val timeStr = name.substring(6, name.length - 15) // removes "_1920x2084.webp"
+                if (!activeTimesSet.contains(timeStr)) {
+                    file.delete()
+                } else {
+                    val fileTime = Instant.parse(timeStr)
+                    if (fileTime.isBefore(oldestAllowed)) {
+                        file.delete()
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            file.delete()
+        }
+    }
+}
+
+private var lastCachedBaseTime: Instant? = null
+
+private suspend fun preCacheRadarFrames() {
+    val base = getRoundedBaseTime()
+    if (base == lastCachedBaseTime) {
+        return
+    }
+    
+    logger.info("New base time detected: $base. Pre-caching all 60 frames...")
+    val times = generateCombinedFrameTimes(base)
+    
+    val oldestAllowed = base.minus(Duration.ofHours(6))
+    cleanOldDiskCache(oldestAllowed, times, base)
+    
+    val semaphore = kotlinx.coroutines.sync.Semaphore(5)
+    coroutineScope {
+        times.forEach { timeInstant ->
+            launch {
+                semaphore.acquire()
+                try {
+                    val timeStr = timeInstant.toString()
+                    val baseStr = base.toString()
+                    
+                    val isForecast = timeInstant.epochSecond >= base.epochSecond
+                    val cacheKey = if (isForecast) {
+                        "frame_${timeStr}_base_${baseStr}_1920x2084"
+                    } else {
+                        "frame_${timeStr}_1920x2084"
+                    }
+                    
+                    val diskFile = File(cacheDir, "$cacheKey.webp")
+                    if (!diskFile.exists() || diskFile.length() == 0L) {
+                        logger.info("Pre-caching miss for key: $cacheKey. Fetching...")
+                        val webpBytes = fetchAndProcessRadar(timeStr, if (isForecast) baseStr else "0", 1920, 2084)
+                        if (webpBytes != null) {
+                            memoryCache[cacheKey] = webpBytes
+                            try {
+                                diskFile.writeBytes(webpBytes)
+                            } catch (e: Exception) {
+                                logger.warn("Failed to write pre-cached file: ${e.message}")
+                            }
+                        }
+                    }
+                } finally {
+                    semaphore.release()
+                }
+            }
+        }
+    }
+    
+    lastCachedBaseTime = base
+    logger.info("Pre-caching completed for base time: $base")
 }
