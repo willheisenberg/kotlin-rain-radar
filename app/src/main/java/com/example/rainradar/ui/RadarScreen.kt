@@ -371,13 +371,15 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                                 fontSize = 10.sp
                             )
                             lastDownloadWasFromProxy?.let { wasFromProxy ->
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = if (wasFromProxy) "● Proxy Aktiv (WebP)" else "● DWD Direkt (PNG Fallback)",
-                                    color = if (wasFromProxy) AccentGreen else Color(0xFFEAB308),
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+                                if (!wasFromProxy) {
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "● DWD Direkt (PNG Fallback)",
+                                        color = Color(0xFFEAB308),
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
                         }
                         Spacer(modifier = Modifier.weight(1f))
