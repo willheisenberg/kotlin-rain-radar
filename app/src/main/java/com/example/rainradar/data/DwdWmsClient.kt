@@ -30,10 +30,6 @@ object DwdWmsClient {
     const val WMS_DEFAULT_WIDTH = 1920
     const val WMS_DEFAULT_HEIGHT = 2084
 
-    // Resolution for proxy requests (2x Ultra-HD)
-    const val WMS_PROXY_WIDTH = 3840
-    const val WMS_PROXY_HEIGHT = 4168
-
     // Radar geographic bounds (WGS84)
     const val LAT_SOUTH = 45.0
     const val LAT_NORTH = 56.576107
@@ -247,7 +243,7 @@ object DwdWmsClient {
         val timeStr = formatIsoTime(time)
         val baseStr = formatIsoTime(base)
         val proxyUrl = if (PROXY_URL.isNotEmpty()) {
-            "$PROXY_URL?time=$timeStr&base=$baseStr&width=$WMS_PROXY_WIDTH&height=$WMS_PROXY_HEIGHT"
+            "$PROXY_URL?time=$timeStr&base=$baseStr&width=$WMS_DEFAULT_WIDTH&height=$WMS_DEFAULT_HEIGHT"
         } else ""
 
         var success = false
