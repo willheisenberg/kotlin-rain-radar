@@ -92,6 +92,7 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
     val isPreloading by viewModel.isPreloading.collectAsState()
 
     val preloadProgress by viewModel.preloadProgress.collectAsState()
+    val lastDownloadWasFromProxy by viewModel.lastDownloadWasFromProxy.collectAsState()
 
     // Observe App Lifecycle: reset to Now on ON_RESUME and stop playback on ON_PAUSE
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -369,6 +370,15 @@ fun RadarScreen(viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose
                                 color = TextSecondary,
                                 fontSize = 10.sp
                             )
+                            lastDownloadWasFromProxy?.let { wasFromProxy ->
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = if (wasFromProxy) "● Proxy Aktiv (WebP)" else "● DWD Direkt (PNG Fallback)",
+                                    color = if (wasFromProxy) AccentGreen else Color(0xFFEAB308),
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                         Spacer(modifier = Modifier.weight(1f))
 

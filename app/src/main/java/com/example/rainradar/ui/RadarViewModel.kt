@@ -28,6 +28,9 @@ class RadarViewModel : ViewModel() {
     private val _preloadProgress = MutableStateFlow(0f)
     val preloadProgress: StateFlow<Float> = _preloadProgress.asStateFlow()
 
+    private val _lastDownloadWasFromProxy = MutableStateFlow<Boolean?>(DwdWmsClient.lastDownloadWasFromProxy)
+    val lastDownloadWasFromProxy: StateFlow<Boolean?> = _lastDownloadWasFromProxy.asStateFlow()
+
     private var playbackJob: Job? = null
     private var preloadJob: Job? = null
     private var autoRefreshJob: Job? = null
@@ -147,8 +150,10 @@ class RadarViewModel : ViewModel() {
             val oldestAllowed = times.firstOrNull() ?: base.minusSeconds(3600 * 3)
             DwdWmsClient.cleanOldCache(activeContext, base, oldestAllowed, times)
             
-            // Download frames concurrently up to 5 parallel tasks
-            val semaphore = kotlinx.coroutines.sync.Semaphore(5)
+            // Download frames concurrently: use 30 parallel tasks for our proxy,
+            // but keep the safe limit of 5 for direct DWD fallback downloads.
+            val concurrencyLimit = if (DwdWmsClient.PROXY_URL.isNotEmpty()) 30 else 5
+            val semaphore = kotlinx.coroutines.sync.Semaphore(concurrencyLimit)
             val jobs = times.map { time ->
                 launch {
                     semaphore.acquire()
@@ -172,6 +177,7 @@ class RadarViewModel : ViewModel() {
             
             // Switch to Main thread to reset loading states
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                _lastDownloadWasFromProxy.value = DwdWmsClient.lastDownloadWasFromProxy
                 _isPreloading.value = false
                 _preloadProgress.value = 1f
             }

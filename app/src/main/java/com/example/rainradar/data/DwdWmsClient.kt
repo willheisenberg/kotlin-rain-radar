@@ -17,6 +17,9 @@ object DwdWmsClient {
     // Set to empty string "" to bypass proxy and fetch directly from DWD
     val PROXY_URL = com.example.rainradar.BuildConfig.PROXY_URL
 
+    @Volatile
+    var lastDownloadWasFromProxy: Boolean? = null
+
     // Frame layout constants
     const val PAST_FRAME_COUNT = 36
     const val TOTAL_FRAME_COUNT = 60
@@ -44,6 +47,10 @@ object DwdWmsClient {
         .withZone(ZoneOffset.UTC)
 
     private val client = OkHttpClient.Builder()
+        .dispatcher(okhttp3.Dispatcher().apply {
+            maxRequests = 100
+            maxRequestsPerHost = 60
+        })
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
@@ -279,10 +286,12 @@ object DwdWmsClient {
         }
 
         if (success) {
+            lastDownloadWasFromProxy = true
             return true
         }
 
         // 2. Fallback: Download PNG directly from DWD WMS
+        lastDownloadWasFromProxy = false
         val url = getBBoxWmsUrl(time, base)
         val request = Request.Builder()
             .url(url)
