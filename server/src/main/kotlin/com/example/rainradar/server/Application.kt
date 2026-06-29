@@ -268,6 +268,9 @@ private const val TOTAL_FRAME_COUNT = 60
 private const val FRAME_INTERVAL_SECONDS = 300L   // 5 minutes
 private const val SAFETY_OFFSET_SECONDS = 600L    // 10 minutes
 
+private const val PRE_CACHE_WIDTH = 3840
+private const val PRE_CACHE_HEIGHT = 4168
+
 private fun getRoundedBaseTime(): Instant {
     val now = Instant.now()
     val epochSec = now.epochSecond
@@ -294,6 +297,7 @@ private fun cleanOldDiskCache(oldestAllowed: Instant, activeTimes: List<Instant>
     
     val activeTimesSet = activeTimes.map { it.toString() }.toSet()
     val currentBaseStr = currentBase.toString()
+    val suffixLength = "_${PRE_CACHE_WIDTH}x${PRE_CACHE_HEIGHT}.webp".length
     
     for (file in files) {
         val name = file.name
@@ -306,7 +310,7 @@ private fun cleanOldDiskCache(oldestAllowed: Instant, activeTimes: List<Instant>
                 val firstBaseIndex = name.indexOf("_base_")
                 if (firstBaseIndex != -1) {
                     val timeStr = name.substring(6, firstBaseIndex)
-                    val baseStr = name.substring(firstBaseIndex + 6, name.length - 15) // removes "_1920x2084.webp"
+                    val baseStr = name.substring(firstBaseIndex + 6, name.length - suffixLength)
                     
                     if (!activeTimesSet.contains(timeStr)) {
                         file.delete()
@@ -322,7 +326,7 @@ private fun cleanOldDiskCache(oldestAllowed: Instant, activeTimes: List<Instant>
                     file.delete()
                 }
             } else {
-                val timeStr = name.substring(6, name.length - 15) // removes "_1920x2084.webp"
+                val timeStr = name.substring(6, name.length - suffixLength)
                 if (!activeTimesSet.contains(timeStr)) {
                     file.delete()
                 } else {
@@ -363,15 +367,15 @@ private suspend fun preCacheRadarFrames() {
                     
                     val isForecast = timeInstant.epochSecond >= base.epochSecond
                     val cacheKey = if (isForecast) {
-                        "frame_${timeStr}_base_${baseStr}_1920x2084"
+                        "frame_${timeStr}_base_${baseStr}_${PRE_CACHE_WIDTH}x${PRE_CACHE_HEIGHT}"
                     } else {
-                        "frame_${timeStr}_1920x2084"
+                        "frame_${timeStr}_${PRE_CACHE_WIDTH}x${PRE_CACHE_HEIGHT}"
                     }
                     
                     val diskFile = File(cacheDir, "$cacheKey.webp")
                     if (!diskFile.exists() || diskFile.length() == 0L) {
                         logger.info("Pre-caching miss for key: $cacheKey. Fetching...")
-                        val webpBytes = fetchAndProcessRadar(timeStr, if (isForecast) baseStr else "0", 1920, 2084)
+                        val webpBytes = fetchAndProcessRadar(timeStr, if (isForecast) baseStr else "0", PRE_CACHE_WIDTH, PRE_CACHE_HEIGHT)
                         if (webpBytes != null) {
                             memoryCache[cacheKey] = webpBytes
                             try {
