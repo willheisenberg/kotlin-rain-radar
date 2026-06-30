@@ -5,8 +5,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import org.maplibre.android.MapLibre
 import com.example.rainradar.ui.RadarScreen
+import org.maplibre.android.MapLibre
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -14,9 +14,9 @@ class MainActivity : ComponentActivity() {
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         enableEdgeToEdge()
         MapLibre.getInstance(this)
-        
+
         val showBilling = intent?.getBooleanExtra("show_billing", false) ?: false
-        
+
         setContent {
             RadarScreen(initialShowBilling = showBilling)
         }

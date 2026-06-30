@@ -17,3 +17,7 @@ app/release/
 # Certificates and keys
 *.jks
 *.keystore
+
+# Claude Code
+.claude/
+CLAUDE.md
