@@ -9,3 +9,7 @@ build/
 .cxx
 local.properties
 *.aab
+
+# Claude Code
+.claude/
+CLAUDE.md
