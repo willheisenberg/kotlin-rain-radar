@@ -8,6 +8,7 @@ import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.withPermit
 import org.slf4j.LoggerFactory
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
@@ -29,10 +30,15 @@ private val logger = LoggerFactory.getLogger("RadarProxy")
 private val memoryCache = ConcurrentHashMap<String, ByteArray>()
 private val cacheDir = File("cache").apply { if (!exists()) mkdirs() }
 
+// Limits concurrent DWD fetches from both on-demand requests and pre-cache loop
+private val dwdSemaphore = kotlinx.coroutines.sync.Semaphore(10)
+
 // HTTP client for fetching from DWD WMS
-private val httpClient = HttpClient.newBuilder()
-    .connectTimeout(Duration.ofSeconds(10))
-    .build()
+private val httpClient =
+    HttpClient
+        .newBuilder()
+        .connectTimeout(Duration.ofSeconds(10))
+        .build()
 
 fun main() {
     embeddedServer(Netty, port = 8080, host = "0.0.0.0", module = Application::module)
@@ -79,23 +85,40 @@ fun Application.module() {
             val height = heightStr.toIntOrNull() ?: 2084
 
             // Generate unique cache key
-            val timeInstant = try {
-                Instant.parse(time)
-            } catch (e: Exception) {
-                call.respondText("Invalid time format (must be ISO-8601 UTC, e.g. 2026-06-27T10:00:00Z)", status = HttpStatusCode.BadRequest)
-                return@get
-            }
+            val timeInstant =
+                try {
+                    Instant.parse(time)
+                } catch (e: Exception) {
+                    call.respondText(
+                        "Invalid time format (must be ISO-8601 UTC, e.g. 2026-06-27T10:00:00Z)",
+                        status = HttpStatusCode.BadRequest,
+                    )
+                    return@get
+                }
 
-            val baseInstant = if (!base.isNullOrBlank() && base != "0") {
-                try { Instant.parse(base) } catch (e: Exception) { null }
-            } else null
+            val baseInstant =
+                if (!base.isNullOrBlank() && base != "0") {
+                    try {
+                        Instant.parse(base)
+                    } catch (e: Exception) {
+                        null
+                    }
+                } else {
+                    null
+                }
 
             // Forecasts depend on base time, history frames do not
             val isForecast = baseInstant != null && timeInstant.epochSecond >= baseInstant.epochSecond
-            val cacheKey = if (isForecast) {
-                "frame_${time}_base_${base}_${width}x${height}"
-            } else {
-                "frame_${time}_${width}x${height}"
+            val cacheKey =
+                if (isForecast) {
+                    "frame_${time}_base_${base}_${width}x$height"
+                } else {
+                    "frame_${time}_${width}x$height"
+                }
+
+            // Fix 1: if a new base is detected, trigger pre-caching immediately in the background
+            if (baseInstant != null && baseInstant != lastCachedBaseTime) {
+                launch(Dispatchers.IO) { preCacheRadarFrames() }
             }
 
             // 1. Try In-Memory Cache
@@ -114,9 +137,9 @@ fun Application.module() {
                 return@get
             }
 
-            // 3. Cache Miss - Fetch from DWD, process, and compress
+            // 3. Cache Miss - Fix 2: limit concurrent DWD fetches via shared semaphore
             logger.info("Cache miss for key: $cacheKey. Fetching from DWD...")
-            val webpBytes = fetchAndProcessRadar(time, base ?: "0", width, height)
+            val webpBytes = dwdSemaphore.withPermit { fetchAndProcessRadar(time, base ?: "0", width, height) }
 
             if (webpBytes != null) {
                 // Save to caches
@@ -138,9 +161,15 @@ fun Application.module() {
  * Fetches the PNG from maps.dwd.de, removes gray/pink/blend background pixels,
  * and encodes the result into WebP.
  */
-private fun fetchAndProcessRadar(time: String, base: String, width: Int, height: Int): ByteArray? {
+private fun fetchAndProcessRadar(
+    time: String,
+    base: String,
+    width: Int,
+    height: Int,
+): ByteArray? {
     val bbox = "222638.98,5621521.49,2115070.32,7673967.65"
-    val dwdUrl = "https://maps.dwd.de/geoserver/ows?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap" +
+    val dwdUrl =
+        "https://maps.dwd.de/geoserver/ows?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap" +
             "&LAYERS=dwd:Niederschlagsradar" +
             "&STYLES=" +
             "&CRS=EPSG:3857" +
@@ -151,33 +180,41 @@ private fun fetchAndProcessRadar(time: String, base: String, width: Int, height:
             "&TIME=$time" +
             "&_cb=$base"
 
-    try {
-        val request = HttpRequest.newBuilder()
+    val request =
+        HttpRequest
+            .newBuilder()
             .uri(URI.create(dwdUrl))
             .header("User-Agent", "DwdRainRadarProxyServer")
             .timeout(Duration.ofSeconds(15))
             .GET()
             .build()
 
-        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream())
-        if (response.statusCode() != 200) {
-            logger.error("DWD WMS server returned HTTP status code ${response.statusCode()} for time $time")
-            return null
-        }
+    repeat(2) { attempt ->
+        try {
+            val response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream())
+            if (response.statusCode() != 200) {
+                logger.warn("DWD returned HTTP ${response.statusCode()} for $time (attempt ${attempt + 1})")
+                if (attempt == 0) Thread.sleep(500)
+                return@repeat
+            }
 
-        response.body().use { inputStream ->
-            val image = ImageIO.read(inputStream) ?: return null
-            
-            // Clean the image pixels (set gray/pink background and blend boundary pixels to transparent)
-            cleanRadarImage(image)
-
-            // Convert to WebP
-            return compressToWebP(image)
+            response.body().use { inputStream ->
+                val image = ImageIO.read(inputStream)
+                if (image == null) {
+                    logger.warn("DWD returned non-image data for $time (attempt ${attempt + 1})")
+                    if (attempt == 0) Thread.sleep(500)
+                    return@repeat
+                }
+                cleanRadarImage(image)
+                return compressToWebP(image)
+            }
+        } catch (e: Exception) {
+            logger.warn("Error fetching radar frame for $time (attempt ${attempt + 1}): ${e.message}")
+            if (attempt == 0) Thread.sleep(500)
         }
-    } catch (e: Exception) {
-        logger.error("Error processing radar frame for time $time: ${e.message}", e)
-        return null
     }
+    logger.error("All attempts failed for radar frame at $time")
+    return null
 }
 
 /**
@@ -188,7 +225,7 @@ private fun fetchAndProcessRadar(time: String, base: String, width: Int, height:
 private fun cleanRadarImage(image: BufferedImage) {
     val width = image.width
     val height = image.height
-    
+
     // Bulk read pixels for high performance
     val pixels = IntArray(width * height)
     image.getRGB(0, 0, width, height, pixels, 0, width)
@@ -208,13 +245,16 @@ private fun cleanRadarImage(image: BufferedImage) {
         val bf = b / 255.0f
 
         // 1. Gray background: R ≈ G ≈ B (within 0.03 of each other)
-        val isGray = (Math.abs(rf - gf) <= 0.03f &&
+        val isGray = (
+            Math.abs(rf - gf) <= 0.03f &&
                 Math.abs(rf - bf) <= 0.03f &&
-                Math.abs(gf - bf) <= 0.03f)
+                Math.abs(gf - bf) <= 0.03f
+        )
 
         // 2. Pink/magenta border detection
         val minRB = minOf(rf, bf)
-        val isPink = (Math.abs(rf - bf) <= 0.19f) &&
+        val isPink =
+            (Math.abs(rf - bf) <= 0.19f) &&
                 (minRB > 0.01f) &&
                 (gf < minRB - 0.02f)
 
@@ -239,15 +279,18 @@ private fun compressToWebP(image: BufferedImage): ByteArray {
     val outputStream = ByteArrayOutputStream()
     val writers = ImageIO.getImageWritersByMIMEType("image/webp")
     if (!writers.hasNext()) {
-        throw IllegalStateException("WebP ImageWriter is not registered on this system. Make sure webp-imageio dependency is on the classpath.")
+        throw IllegalStateException(
+            "WebP ImageWriter is not registered on this system. Make sure webp-imageio dependency is on the classpath.",
+        )
     }
-    
+
     val writer = writers.next()
     val writeParam = writer.defaultWriteParam
     try {
         writeParam.compressionMode = ImageWriteParam.MODE_EXPLICIT
         // Attempt to set WebP lossy compression with 80% quality
-        writeParam.compressionType = writeParam.compressionTypes.firstOrNull { it.contains("lossy", ignoreCase = true) } ?: writeParam.compressionTypes[0]
+        writeParam.compressionType =
+            writeParam.compressionTypes.firstOrNull { it.contains("lossy", ignoreCase = true) } ?: writeParam.compressionTypes[0]
         writeParam.compressionQuality = 0.80f
     } catch (e: Exception) {
         logger.warn("Could not configure WebP compression parameters: ${e.message}. Using default WebP settings.")
@@ -259,14 +302,14 @@ private fun compressToWebP(image: BufferedImage): ByteArray {
         ios.flush()
     }
     writer.dispose()
-    
+
     return outputStream.toByteArray()
 }
 
 private const val PAST_FRAME_COUNT = 36
 private const val TOTAL_FRAME_COUNT = 60
-private const val FRAME_INTERVAL_SECONDS = 300L   // 5 minutes
-private const val SAFETY_OFFSET_SECONDS = 600L    // 10 minutes
+private const val FRAME_INTERVAL_SECONDS = 300L // 5 minutes
+private const val SAFETY_OFFSET_SECONDS = 600L // 10 minutes
 
 private fun getRoundedBaseTime(): Instant {
     val now = Instant.now()
@@ -278,36 +321,41 @@ private fun getRoundedBaseTime(): Instant {
 private fun generateCombinedFrameTimes(base: Instant): List<Instant> {
     val list = ArrayList<Instant>(TOTAL_FRAME_COUNT)
     for (i in 0 until TOTAL_FRAME_COUNT) {
-        val instant = if (i < PAST_FRAME_COUNT) {
-            base.minusSeconds((PAST_FRAME_COUNT - i) * FRAME_INTERVAL_SECONDS)
-        } else {
-            base.plusSeconds((i - PAST_FRAME_COUNT) * FRAME_INTERVAL_SECONDS)
-        }
+        val instant =
+            if (i < PAST_FRAME_COUNT) {
+                base.minusSeconds((PAST_FRAME_COUNT - i) * FRAME_INTERVAL_SECONDS)
+            } else {
+                base.plusSeconds((i - PAST_FRAME_COUNT) * FRAME_INTERVAL_SECONDS)
+            }
         list.add(instant)
     }
     return list
 }
 
-private fun cleanOldDiskCache(oldestAllowed: Instant, activeTimes: List<Instant>, currentBase: Instant) {
+private fun cleanOldDiskCache(
+    oldestAllowed: Instant,
+    activeTimes: List<Instant>,
+    currentBase: Instant,
+) {
     if (!cacheDir.exists() || !cacheDir.isDirectory) return
     val files = cacheDir.listFiles() ?: return
-    
+
     val activeTimesSet = activeTimes.map { it.toString() }.toSet()
     val currentBaseStr = currentBase.toString()
-    
+
     for (file in files) {
         val name = file.name
         if (!name.startsWith("frame_") || !name.endsWith(".webp")) {
             continue
         }
-        
+
         try {
             if (name.contains("_base_")) {
                 val firstBaseIndex = name.indexOf("_base_")
                 if (firstBaseIndex != -1) {
                     val timeStr = name.substring(6, firstBaseIndex)
                     val baseStr = name.substring(firstBaseIndex + 6, name.length - 15) // removes "_1920x2084.webp"
-                    
+
                     if (!activeTimesSet.contains(timeStr)) {
                         file.delete()
                     } else {
@@ -338,36 +386,36 @@ private fun cleanOldDiskCache(oldestAllowed: Instant, activeTimes: List<Instant>
     }
 }
 
-private var lastCachedBaseTime: Instant? = null
+@Volatile private var lastCachedBaseTime: Instant? = null
 
 private suspend fun preCacheRadarFrames() {
     val base = getRoundedBaseTime()
     if (base == lastCachedBaseTime) {
         return
     }
-    
+
     logger.info("New base time detected: $base. Pre-caching all 60 frames...")
     val times = generateCombinedFrameTimes(base)
-    
+
     val oldestAllowed = base.minus(Duration.ofHours(6))
     cleanOldDiskCache(oldestAllowed, times, base)
-    
-    val semaphore = kotlinx.coroutines.sync.Semaphore(5)
+
     coroutineScope {
         times.forEach { timeInstant ->
             launch {
-                semaphore.acquire()
+                dwdSemaphore.acquire()
                 try {
                     val timeStr = timeInstant.toString()
                     val baseStr = base.toString()
-                    
+
                     val isForecast = timeInstant.epochSecond >= base.epochSecond
-                    val cacheKey = if (isForecast) {
-                        "frame_${timeStr}_base_${baseStr}_1920x2084"
-                    } else {
-                        "frame_${timeStr}_1920x2084"
-                    }
-                    
+                    val cacheKey =
+                        if (isForecast) {
+                            "frame_${timeStr}_base_${baseStr}_1920x2084"
+                        } else {
+                            "frame_${timeStr}_1920x2084"
+                        }
+
                     val diskFile = File(cacheDir, "$cacheKey.webp")
                     if (!diskFile.exists() || diskFile.length() == 0L) {
                         logger.info("Pre-caching miss for key: $cacheKey. Fetching...")
@@ -382,12 +430,12 @@ private suspend fun preCacheRadarFrames() {
                         }
                     }
                 } finally {
-                    semaphore.release()
+                    dwdSemaphore.release()
                 }
             }
         }
     }
-    
+
     lastCachedBaseTime = base
     logger.info("Pre-caching completed for base time: $base")
 }
