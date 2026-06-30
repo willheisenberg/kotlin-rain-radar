@@ -2,23 +2,22 @@ package com.example.rainradar.ui
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Context
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import android.app.Activity
-import androidx.compose.ui.platform.LocalView
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.animation.*
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.ui.unit.DpSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -27,7 +26,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -35,29 +33,30 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.foundation.clickable
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import com.example.rainradar.billing.BillingManager
 import com.example.rainradar.data.DwdWmsClient
 import com.example.rainradar.ui.components.RadarMapView
 import com.example.rainradar.ui.components.VerticalSlider
-import androidx.compose.animation.core.animateDpAsState
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.ExperimentalFoundationApi
-import com.example.rainradar.billing.BillingManager
-
 
 // Sleek dark color palette
 val DarkBg = Color(0xFF0F141C)
@@ -70,16 +69,19 @@ val AccentGreen = Color(0xFF22C55E)
 
 fun formatLocalTimeStr(instant: Instant?): String {
     if (instant == null) return "–"
-    val formatter = DateTimeFormatter
-        .ofPattern("EEE, dd.MM. HH:mm", Locale.GERMAN)
-        .withZone(ZoneId.systemDefault())
+    val formatter =
+        DateTimeFormatter
+            .ofPattern("EEE, dd.MM. HH:mm", Locale.GERMAN)
+            .withZone(ZoneId.systemDefault())
     return formatter.format(instant)
 }
+
 fun formatLocalTimeOnly(instant: Instant?): String {
     if (instant == null) return "–"
-    val formatter = DateTimeFormatter
-        .ofPattern("HH:mm", Locale.GERMAN)
-        .withZone(ZoneId.systemDefault())
+    val formatter =
+        DateTimeFormatter
+            .ofPattern("HH:mm", Locale.GERMAN)
+            .withZone(ZoneId.systemDefault())
     return formatter.format(instant)
 }
 
@@ -87,8 +89,10 @@ fun formatLocalTimeOnly(instant: Instant?): String {
 @SuppressLint("MissingPermission")
 @Composable
 fun RadarScreen(
-    viewModel: RadarViewModel = androidx.lifecycle.viewmodel.compose.viewModel(),
-    initialShowBilling: Boolean = false
+    viewModel: RadarViewModel =
+        androidx.lifecycle.viewmodel.compose
+            .viewModel(),
+    initialShowBilling: Boolean = false,
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -98,8 +102,6 @@ fun RadarScreen(
     val isPreloading by viewModel.isPreloading.collectAsState()
 
     val preloadProgress by viewModel.preloadProgress.collectAsState()
-    val lastDownloadWasFromProxy by viewModel.lastDownloadWasFromProxy.collectAsState()
-
     val billingManager = remember { BillingManager.getInstance(context) }
     val isPremium by billingManager.isPremium.collectAsState()
     val isPremiumDebug by billingManager.isPremiumDebug.collectAsState()
@@ -109,19 +111,22 @@ fun RadarScreen(
     // Observe App Lifecycle: reset to Now on ON_RESUME and stop playback on ON_PAUSE
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_RESUME -> {
-                    viewModel.refreshData(context, silent = true)
-                    viewModel.setActiveFrameIndex(DwdWmsClient.PAST_FRAME_COUNT)
-                    billingManager.queryPurchases()
+        val observer =
+            LifecycleEventObserver { _, event ->
+                when (event) {
+                    Lifecycle.Event.ON_RESUME -> {
+                        viewModel.refreshData(context, silent = true)
+                        viewModel.setActiveFrameIndex(DwdWmsClient.PAST_FRAME_COUNT)
+                        billingManager.queryPurchases()
+                    }
+
+                    Lifecycle.Event.ON_PAUSE -> {
+                        viewModel.stopPlayback()
+                    }
+
+                    else -> {}
                 }
-                Lifecycle.Event.ON_PAUSE -> {
-                    viewModel.stopPlayback()
-                }
-                else -> {}
             }
-        }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
@@ -166,54 +171,69 @@ fun RadarScreen(
     }
 
     // Helper to validate if GPS location is within the radar's bounding box coverage
-    fun isLocationInRadarBounds(lat: Double, lon: Double): Boolean {
-        return lat in DwdWmsClient.LAT_SOUTH..DwdWmsClient.LAT_NORTH && lon in DwdWmsClient.LON_WEST..DwdWmsClient.LON_EAST
-    }
+    fun isLocationInRadarBounds(
+        lat: Double,
+        lon: Double,
+    ): Boolean = lat in DwdWmsClient.LAT_SOUTH..DwdWmsClient.LAT_NORTH && lon in DwdWmsClient.LON_WEST..DwdWmsClient.LON_EAST
 
     // Setup GPS & Network Location Updates
     val locationManager = remember { context.getSystemService(Context.LOCATION_SERVICE) as LocationManager }
-    val locationListener = remember {
-        object : LocationListener {
-            override fun onLocationChanged(location: Location) {
-                val lat = location.latitude
-                val lon = location.longitude
-                val inBounds = isLocationInRadarBounds(lat, lon)
-                userLocation = if (inBounds) LatLng(lat, lon) else null
-                if (inBounds) {
-                    context.getSharedPreferences("rain_radar_prefs", Context.MODE_PRIVATE)
-                        .edit()
-                        .putFloat("last_lat", lat.toFloat())
-                        .putFloat("last_lon", lon.toFloat())
-                        .apply()
+    val locationListener =
+        remember {
+            object : LocationListener {
+                override fun onLocationChanged(location: Location) {
+                    val lat = location.latitude
+                    val lon = location.longitude
+                    val inBounds = isLocationInRadarBounds(lat, lon)
+                    userLocation = if (inBounds) LatLng(lat, lon) else null
+                    if (inBounds) {
+                        context
+                            .getSharedPreferences("rain_radar_prefs", Context.MODE_PRIVATE)
+                            .edit()
+                            .putFloat("last_lat", lat.toFloat())
+                            .putFloat("last_lon", lon.toFloat())
+                            .apply()
+                    }
                 }
+
+                override fun onStatusChanged(
+                    provider: String?,
+                    status: Int,
+                    extras: android.os.Bundle?,
+                ) {}
+
+                override fun onProviderEnabled(provider: String) {}
+
+                override fun onProviderDisabled(provider: String) {}
             }
-            override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) {}
-            override fun onProviderEnabled(provider: String) {}
-            override fun onProviderDisabled(provider: String) {}
         }
-    }
 
     var permissionGranted by remember {
         mutableStateOf(
-            androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
-            androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            androidx.core.content.ContextCompat
+                .checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED ||
+                androidx.core.content.ContextCompat
+                    .checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED,
         )
     }
 
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        permissionGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-                            permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-    }
+    val locationPermissionLauncher =
+        rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.RequestMultiplePermissions(),
+        ) { permissions ->
+            permissionGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        }
 
     LaunchedEffect(Unit) {
         if (!permissionGranted) {
             locationPermissionLauncher.launch(
                 arrayOf(
                     Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                )
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                ),
             )
         }
     }
@@ -223,7 +243,11 @@ fun RadarScreen(
         val loc = userLocation
         val map = mapViewInstance
         if (loc != null && map != null && !hasCenteredOnUser) {
-            map.animateCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(loc, targetZoomLevel.toDouble()), 1000)
+            map.animateCamera(
+                org.maplibre.android.camera.CameraUpdateFactory
+                    .newLatLngZoom(loc, targetZoomLevel.toDouble()),
+                1000,
+            )
             hasCenteredOnUser = true
         }
     }
@@ -232,25 +256,42 @@ fun RadarScreen(
         if (permissionGranted) {
             try {
                 // 1. Fetch best possible last known location instantly (GPS or Network)
-                val lastKnownGps = try {
-                    if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                        locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                    } else null
-                } catch (e: Exception) { null }
-
-                val lastKnownNetwork = try {
-                    if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                        locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-                    } else null
-                } catch (e: Exception) { null }
-
-                val bestLastKnown = when {
-                    lastKnownGps != null && lastKnownNetwork != null -> {
-                        if (lastKnownGps.time >= lastKnownNetwork.time) lastKnownGps else lastKnownNetwork
+                val lastKnownGps =
+                    try {
+                        if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                            locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                        } else {
+                            null
+                        }
+                    } catch (e: Exception) {
+                        null
                     }
-                    lastKnownGps != null -> lastKnownGps
-                    else -> lastKnownNetwork
-                }
+
+                val lastKnownNetwork =
+                    try {
+                        if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                            locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                        } else {
+                            null
+                        }
+                    } catch (e: Exception) {
+                        null
+                    }
+
+                val bestLastKnown =
+                    when {
+                        lastKnownGps != null && lastKnownNetwork != null -> {
+                            if (lastKnownGps.time >= lastKnownNetwork.time) lastKnownGps else lastKnownNetwork
+                        }
+
+                        lastKnownGps != null -> {
+                            lastKnownGps
+                        }
+
+                        else -> {
+                            lastKnownNetwork
+                        }
+                    }
 
                 if (bestLastKnown != null) {
                     val lat = bestLastKnown.latitude
@@ -258,7 +299,8 @@ fun RadarScreen(
                     val inBounds = isLocationInRadarBounds(lat, lon)
                     userLocation = if (inBounds) LatLng(lat, lon) else null
                     if (inBounds) {
-                        context.getSharedPreferences("rain_radar_prefs", Context.MODE_PRIVATE)
+                        context
+                            .getSharedPreferences("rain_radar_prefs", Context.MODE_PRIVATE)
                             .edit()
                             .putFloat("last_lat", lat.toFloat())
                             .putFloat("last_lon", lon.toFloat())
@@ -272,7 +314,7 @@ fun RadarScreen(
                         LocationManager.GPS_PROVIDER,
                         5000L,
                         10f,
-                        locationListener
+                        locationListener,
                     )
                 }
                 if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
@@ -280,7 +322,7 @@ fun RadarScreen(
                         LocationManager.NETWORK_PROVIDER,
                         5000L,
                         10f,
-                        locationListener
+                        locationListener,
                     )
                 }
             } catch (e: SecurityException) {
@@ -302,10 +344,9 @@ fun RadarScreen(
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = DarkBg
+        color = DarkBg,
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            
             // ── The Interactive Map View ──
             RadarMapView(
                 frameTimes = frameTimes,
@@ -320,31 +361,34 @@ fun RadarScreen(
                 },
                 onMapReady = { mapView ->
                     mapViewInstance = mapView
-                }
+                },
             )
 
             // ── Status Bar Scrim Overlay ──
             AnimatedVisibility(
                 visible = controlsVisible && !isPreloading,
                 enter = fadeIn(),
-                exit = fadeOut()
+                exit = fadeOut(),
             ) {
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.Black.copy(alpha = 0.5f),
-                                    Color.Transparent
-                                )
-                            )
-                        )
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .background(
+                                Brush.verticalGradient(
+                                    colors =
+                                        listOf(
+                                            Color.Black.copy(alpha = 0.5f),
+                                            Color.Transparent,
+                                        ),
+                                ),
+                            ),
                 ) {
                     Spacer(
-                        modifier = Modifier
-                            .statusBarsPadding()
-                            .height(16.dp)
+                        modifier =
+                            Modifier
+                                .statusBarsPadding()
+                                .height(16.dp),
                     )
                 }
             }
@@ -354,65 +398,58 @@ fun RadarScreen(
                 visible = controlsVisible && !isPreloading,
                 enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
                 exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
-                modifier = Modifier.align(Alignment.TopCenter)
+                modifier = Modifier.align(Alignment.TopCenter),
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(12.dp)
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
+                            .padding(12.dp),
                 ) {
                     // Header Card Row
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
-                            .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                            .padding(horizontal = 14.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                                .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .clickable { showPremiumDialog = true }
-                                .padding(4.dp)
+                            modifier =
+                                Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .clickable { showPremiumDialog = true }
+                                    .padding(4.dp),
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
                                     text = "OpenRain",
                                     color = TextPrimary,
                                     fontSize = 17.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
                                 )
                             }
                             Text(
                                 text = "© OpenStreetMap | DWD (CC BY 4.0)",
                                 color = TextSecondary,
-                                fontSize = 10.sp
+                                fontSize = 10.sp,
                             )
-                            lastDownloadWasFromProxy?.let { wasFromProxy ->
-                                if (!wasFromProxy) {
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = "● DWD Direkt (PNG Fallback)",
-                                        color = Color(0xFFEAB308),
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
                         }
                         Spacer(modifier = Modifier.weight(1f))
 
                         if (!isPremium) {
                             Box(
-                                modifier = Modifier
-                                    .height(26.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(AccentBlue)
-                                    .clickable { showPremiumDialog = true }
-                                    .padding(horizontal = 8.dp),
-                                contentAlignment = Alignment.Center
+                                modifier =
+                                    Modifier
+                                        .height(26.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(AccentBlue)
+                                        .clickable { showPremiumDialog = true }
+                                        .padding(horizontal = 8.dp),
+                                contentAlignment = Alignment.Center,
                             ) {
                                 Text(
                                     text = "Premium",
@@ -420,7 +457,7 @@ fun RadarScreen(
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 1,
-                                    softWrap = false
+                                    softWrap = false,
                                 )
                             }
                             Spacer(modifier = Modifier.width(6.dp))
@@ -428,16 +465,16 @@ fun RadarScreen(
 
                         // Now button
                         Box(
-                            modifier = Modifier
-                                .height(32.dp)
-                                .clip(RoundedCornerShape(7.dp))
-                                .background(SurfaceBg)
-                                .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                                .clickable {
-                                    viewModel.setActiveFrameIndex(DwdWmsClient.PAST_FRAME_COUNT)
-                                }
-                                .padding(horizontal = 10.dp),
-                            contentAlignment = Alignment.Center
+                            modifier =
+                                Modifier
+                                    .height(32.dp)
+                                    .clip(RoundedCornerShape(7.dp))
+                                    .background(SurfaceBg)
+                                    .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                                    .clickable {
+                                        viewModel.setActiveFrameIndex(DwdWmsClient.PAST_FRAME_COUNT)
+                                    }.padding(horizontal = 10.dp),
+                            contentAlignment = Alignment.Center,
                         ) {
                             Text(
                                 text = "Now",
@@ -445,28 +482,29 @@ fun RadarScreen(
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
-                                softWrap = false
+                                softWrap = false,
                             )
                         }
 
                         Spacer(modifier = Modifier.width(8.dp))
 
                         Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(RoundedCornerShape(7.dp))
-                                .background(if (showSettingsSlider) AccentBlue.copy(alpha = 0.2f) else SurfaceBg)
-                                .border(1.dp, if (showSettingsSlider) AccentBlue else BorderColor, RoundedCornerShape(7.dp))
-                                .clickable {
-                                    showSettingsSlider = !showSettingsSlider
-                                },
-                            contentAlignment = Alignment.Center
+                            modifier =
+                                Modifier
+                                    .size(32.dp)
+                                    .clip(RoundedCornerShape(7.dp))
+                                    .background(if (showSettingsSlider) AccentBlue.copy(alpha = 0.2f) else SurfaceBg)
+                                    .border(1.dp, if (showSettingsSlider) AccentBlue else BorderColor, RoundedCornerShape(7.dp))
+                                    .clickable {
+                                        showSettingsSlider = !showSettingsSlider
+                                    },
+                            contentAlignment = Alignment.Center,
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Settings,
                                 contentDescription = "Einstellungen",
                                 tint = if (showSettingsSlider) AccentBlue else TextPrimary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(18.dp),
                             )
                         }
                     }
@@ -477,40 +515,44 @@ fun RadarScreen(
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         // Active Frame Info (Top-Left under header)
                         Box(
-                            modifier = Modifier
-                                .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
-                                .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                            modifier =
+                                Modifier
+                                    .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                                    .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                                    .padding(horizontal = 10.dp, vertical = 5.dp),
                         ) {
                             Text(
-                                text = if (frameTimes.isNotEmpty() && activeFrameIndex in frameTimes.indices) {
-                                    formatLocalTimeStr(frameTimes[activeFrameIndex])
-                                } else "–",
+                                text =
+                                    if (frameTimes.isNotEmpty() && activeFrameIndex in frameTimes.indices) {
+                                        formatLocalTimeStr(frameTimes[activeFrameIndex])
+                                    } else {
+                                        "–"
+                                    },
                                 color = TextPrimary,
                                 fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
                             )
                         }
 
                         // Mode Badge (Top-Right under header)
                         val isActiveForecast = activeFrameIndex >= DwdWmsClient.PAST_FRAME_COUNT
                         Box(
-                            modifier = Modifier
-                                .background(
-                                    color = if (isActiveForecast) AccentBlue.copy(alpha = 0.9f) else AccentGreen.copy(alpha = 0.9f),
-                                    shape = RoundedCornerShape(7.dp)
-                                )
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                            modifier =
+                                Modifier
+                                    .background(
+                                        color = if (isActiveForecast) AccentBlue.copy(alpha = 0.9f) else AccentGreen.copy(alpha = 0.9f),
+                                        shape = RoundedCornerShape(7.dp),
+                                    ).padding(horizontal = 8.dp, vertical = 4.dp),
                         ) {
                             Text(
                                 text = if (isActiveForecast) "Vorhersage" else "Verlauf",
                                 color = Color.White,
                                 fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
                             )
                         }
                     }
@@ -522,7 +564,7 @@ fun RadarScreen(
                 visible = controlsVisible && !isPreloading,
                 enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
                 exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
-                modifier = Modifier.align(Alignment.BottomEnd)
+                modifier = Modifier.align(Alignment.BottomEnd),
             ) {
                 RainIntensityLegend()
             }
@@ -532,48 +574,52 @@ fun RadarScreen(
                 visible = controlsVisible && !isPreloading && showSettingsSlider,
                 enter = slideInHorizontally(initialOffsetX = { -it }) + fadeIn(),
                 exit = slideOutHorizontally(targetOffsetX = { -it }) + fadeOut(),
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .statusBarsPadding()
-                    .padding(start = 12.dp, top = 120.dp)
+                modifier =
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .statusBarsPadding()
+                        .padding(start = 12.dp, top = 120.dp),
             ) {
                 Column(
-                    modifier = Modifier
-                        .width(53.dp)
-                        .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
-                        .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                        .padding(vertical = 12.dp),
+                    modifier =
+                        Modifier
+                            .width(53.dp)
+                            .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                            .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                            .padding(vertical = 12.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
                         text = "Ansicht",
                         color = TextPrimary,
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
                     )
 
                     val widthKm = 106000 / Math.pow(2.0, targetZoomLevel.toDouble())
-                    val displayKm = if (widthKm >= 1000) {
-                        "${Math.round(widthKm / 100.0) * 100} km"
-                    } else if (widthKm >= 100) {
-                        "${Math.round(widthKm / 10.0) * 10} km"
-                    } else {
-                        "${Math.round(widthKm)} km"
-                    }
+                    val displayKm =
+                        if (widthKm >= 1000) {
+                            "${Math.round(widthKm / 100.0) * 100} km"
+                        } else if (widthKm >= 100) {
+                            "${Math.round(widthKm / 10.0) * 10} km"
+                        } else {
+                            "${Math.round(widthKm)} km"
+                        }
 
                     Text(
                         text = displayKm,
                         color = AccentBlue,
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
                     )
 
                     Box(
-                        modifier = Modifier
-                            .height(sliderHeight)
-                            .width(48.dp),
-                        contentAlignment = Alignment.Center
+                        modifier =
+                            Modifier
+                                .height(sliderHeight)
+                                .width(48.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
                         VerticalSlider(
                             value = targetZoomLevel,
@@ -587,28 +633,29 @@ fun RadarScreen(
                             modifier = Modifier.fillMaxSize(),
                             trackColor = BorderColor,
                             activeTrackColor = AccentBlue,
-                            thumbColor = AccentBlue
+                            thumbColor = AccentBlue,
                         )
                     }
 
                     Spacer(modifier = Modifier.height(4.dp))
 
                     Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(7.dp))
-                            .background(SurfaceBg)
-                            .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                            .clickable {
-                                viewModel.refreshData(context, force = true)
-                            },
-                        contentAlignment = Alignment.Center
+                        modifier =
+                            Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(7.dp))
+                                .background(SurfaceBg)
+                                .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                                .clickable {
+                                    viewModel.refreshData(context, force = true)
+                                },
+                        contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
                             contentDescription = "Cache leeren & aktualisieren",
                             tint = TextPrimary,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(18.dp),
                         )
                     }
                 }
@@ -619,29 +666,35 @@ fun RadarScreen(
                 visible = controlsVisible && !isPreloading && userLocation != null,
                 enter = slideInHorizontally(initialOffsetX = { -it }) + fadeIn(),
                 exit = slideOutHorizontally(targetOffsetX = { -it }) + fadeOut(),
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(bottom = 150.dp, start = 12.dp)
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(bottom = 150.dp, start = 12.dp),
             ) {
                 FloatingActionButton(
                     onClick = {
                         userLocation?.let { loc ->
                             mapViewInstance?.let { map ->
-                                map.animateCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(loc, targetZoomLevel.toDouble()), 1000)
+                                map.animateCamera(
+                                    org.maplibre.android.camera.CameraUpdateFactory
+                                        .newLatLngZoom(loc, targetZoomLevel.toDouble()),
+                                    1000,
+                                )
                             }
                         }
                     },
                     containerColor = AccentBlue,
                     contentColor = Color.White,
                     shape = CircleShape,
-                    modifier = Modifier
-                        .size(53.dp)
-                        .border(1.dp, BorderColor.copy(alpha = 0.5f), CircleShape)
+                    modifier =
+                        Modifier
+                            .size(53.dp)
+                            .border(1.dp, BorderColor.copy(alpha = 0.5f), CircleShape),
                 ) {
                     Icon(
                         imageVector = Icons.Default.LocationOn,
                         contentDescription = "Zu Standort springen",
-                        modifier = Modifier.size(25.dp)
+                        modifier = Modifier.size(25.dp),
                     )
                 }
             }
@@ -651,11 +704,11 @@ fun RadarScreen(
                 visible = isPreloading,
                 enter = fadeIn(),
                 exit = fadeOut(),
-                modifier = Modifier.align(Alignment.Center)
+                modifier = Modifier.align(Alignment.Center),
             ) {
                 PreloadingOverlay(
                     preloadProgress = preloadProgress,
-                    frameCount = frameTimes.size
+                    frameCount = frameTimes.size,
                 )
             }
 
@@ -664,171 +717,207 @@ fun RadarScreen(
                 visible = controlsVisible && !isPreloading,
                 enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                 exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-                modifier = Modifier.align(Alignment.BottomCenter)
+                modifier = Modifier.align(Alignment.BottomCenter),
             ) {
                 Column(
-                    modifier = Modifier
-                        .navigationBarsPadding()
-                        .padding(12.dp)
-                        .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
-                        .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                    modifier =
+                        Modifier
+                            .navigationBarsPadding()
+                            .padding(12.dp)
+                            .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                            .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                 ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    // Play/Pause button
-                    Button(
-                        onClick = { viewModel.togglePlayback() },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isPlaying) Color(0xFFEF4444) else AccentBlue,
-                            contentColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(7.dp),
-                        contentPadding = PaddingValues(0.dp),
-                        modifier = Modifier.size(46.dp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        if (isPlaying) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(modifier = Modifier.size(width = 4.dp, height = 16.dp).background(Color.White, RoundedCornerShape(1.dp)))
-                                Box(modifier = Modifier.size(width = 4.dp, height = 16.dp).background(Color.White, RoundedCornerShape(1.dp)))
-                            }
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = "Play",
-                                tint = Color.White,
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    // Combined Slider with dual-colored background track
-                    Box(
-                        modifier = Modifier
-                            .weight(1f),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        // Background track representing past/history (60% width) and forecast (40% width)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(4.dp)
-                                .padding(horizontal = 8.dp) // Align with slider thumb padding
-                                .clip(RoundedCornerShape(2.dp))
+                        // Play/Pause button
+                        Button(
+                            onClick = { viewModel.togglePlayback() },
+                            colors =
+                                ButtonDefaults.buttonColors(
+                                    containerColor = if (isPlaying) Color(0xFFEF4444) else AccentBlue,
+                                    contentColor = Color.White,
+                                ),
+                            shape = RoundedCornerShape(7.dp),
+                            contentPadding = PaddingValues(0.dp),
+                            modifier = Modifier.size(46.dp),
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(36f)
-                                    .fillMaxHeight()
-                                    .background(AccentGreen.copy(alpha = 0.8f))
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .weight(24f)
-                                    .fillMaxHeight()
-                                    .background(AccentBlue.copy(alpha = 0.8f))
+                            if (isPlaying) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Box(
+                                        modifier =
+                                            Modifier
+                                                .size(
+                                                    width = 4.dp,
+                                                    height = 16.dp,
+                                                ).background(Color.White, RoundedCornerShape(1.dp)),
+                                    )
+                                    Box(
+                                        modifier =
+                                            Modifier
+                                                .size(
+                                                    width = 4.dp,
+                                                    height = 16.dp,
+                                                ).background(Color.White, RoundedCornerShape(1.dp)),
+                                    )
+                                }
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = "Play",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(28.dp),
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        // Combined Slider with dual-colored background track
+                        Box(
+                            modifier =
+                                Modifier
+                                    .weight(1f),
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            // Background track representing past/history (60% width) and forecast (40% width)
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .height(4.dp)
+                                        .padding(horizontal = 8.dp) // Align with slider thumb padding
+                                        .clip(RoundedCornerShape(2.dp)),
+                            ) {
+                                Box(
+                                    modifier =
+                                        Modifier
+                                            .weight(36f)
+                                            .fillMaxHeight()
+                                            .background(AccentGreen.copy(alpha = 0.8f)),
+                                )
+                                Box(
+                                    modifier =
+                                        Modifier
+                                            .weight(24f)
+                                            .fillMaxHeight()
+                                            .background(AccentBlue.copy(alpha = 0.8f)),
+                                )
+                            }
+
+                            val sliderMax = maxOf(0f, (frameTimes.size - 1).toFloat())
+                            val interactionSource = remember { MutableInteractionSource() }
+                            Slider(
+                                value = activeFrameIndex.toFloat().coerceIn(0f, maxOf(0.1f, sliderMax)),
+                                onValueChange = { viewModel.setActiveFrameIndex(it.toInt()) },
+                                valueRange = 0f..maxOf(0.1f, sliderMax),
+                                steps = maxOf(0, frameTimes.size - 2),
+                                colors =
+                                    SliderDefaults.colors(
+                                        activeTrackColor = Color.Transparent,
+                                        inactiveTrackColor = Color.Transparent,
+                                        thumbColor = if (activeFrameIndex < DwdWmsClient.PAST_FRAME_COUNT) AccentGreen else AccentBlue,
+                                    ),
+                                interactionSource = interactionSource,
+                                thumb = {
+                                    SliderDefaults.Thumb(
+                                        interactionSource = interactionSource,
+                                        colors =
+                                            SliderDefaults.colors(
+                                                thumbColor =
+                                                    if (activeFrameIndex <
+                                                        DwdWmsClient.PAST_FRAME_COUNT
+                                                    ) {
+                                                        AccentGreen
+                                                    } else {
+                                                        AccentBlue
+                                                    },
+                                            ),
+                                        thumbSize = DpSize(30.dp, 30.dp),
+                                        modifier = Modifier.border(2.dp, Color.White, CircleShape),
+                                    )
+                                },
+                                modifier = Modifier.fillMaxWidth(),
                             )
                         }
 
-                        val sliderMax = maxOf(0f, (frameTimes.size - 1).toFloat())
-                        val interactionSource = remember { MutableInteractionSource() }
-                        Slider(
-                            value = activeFrameIndex.toFloat().coerceIn(0f, maxOf(0.1f, sliderMax)),
-                            onValueChange = { viewModel.setActiveFrameIndex(it.toInt()) },
-                            valueRange = 0f..maxOf(0.1f, sliderMax),
-                            steps = maxOf(0, frameTimes.size - 2),
-                            colors = SliderDefaults.colors(
-                                activeTrackColor = Color.Transparent,
-                                inactiveTrackColor = Color.Transparent,
-                                thumbColor = if (activeFrameIndex < DwdWmsClient.PAST_FRAME_COUNT) AccentGreen else AccentBlue
-                            ),
-                            interactionSource = interactionSource,
-                            thumb = {
-                                SliderDefaults.Thumb(
-                                    interactionSource = interactionSource,
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = if (activeFrameIndex < DwdWmsClient.PAST_FRAME_COUNT) AccentGreen else AccentBlue
-                                    ),
-                                    thumbSize = DpSize(30.dp, 30.dp),
-                                    modifier = Modifier.border(2.dp, Color.White, CircleShape)
-                                )
-                            },
-                            modifier = Modifier.fillMaxWidth()
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        // Local time readout
+                        Text(
+                            text =
+                                if (frameTimes.isNotEmpty() && activeFrameIndex in frameTimes.indices) {
+                                    formatLocalTimeOnly(frameTimes[activeFrameIndex])
+                                } else {
+                                    "–"
+                                },
+                            color = TextPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.width(50.dp),
                         )
                     }
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    // Local time readout
-                    Text(
-                        text = if (frameTimes.isNotEmpty() && activeFrameIndex in frameTimes.indices) {
-                            formatLocalTimeOnly(frameTimes[activeFrameIndex])
-                        } else "–",
-                        color = TextPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.width(50.dp)
-                    )
                 }
-            }
             }
 
             if (showPremiumDialog) {
-                val isPurchased = remember(isPremium) {
-                    context.getSharedPreferences("rain_radar_prefs", Context.MODE_PRIVATE)
-                        .getBoolean("is_premium", false) || isPremiumDebug
-                }
+                val isPurchased =
+                    remember(isPremium) {
+                        context
+                            .getSharedPreferences("rain_radar_prefs", Context.MODE_PRIVATE)
+                            .getBoolean("is_premium", false) || isPremiumDebug
+                    }
 
                 AlertDialog(
                     onDismissRequest = { showPremiumDialog = false },
                     title = {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text(
                                 text = "OpenRain Premium",
                                 color = TextPrimary,
                                 fontSize = 20.sp,
                                 fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .combinedClickable(
-                                        onLongClick = {
-                                            billingManager.toggleDeveloperBypass()
-                                        },
-                                        onClick = {}
-                                    )
+                                modifier =
+                                    Modifier
+                                        .weight(1f)
+                                        .combinedClickable(
+                                            onLongClick = {
+                                                billingManager.toggleDeveloperBypass()
+                                            },
+                                            onClick = {},
+                                        ),
                             )
                         }
                     },
                     text = {
                         Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 8.dp)
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 8.dp),
                         ) {
                             Text(
                                 text = "Vorteile der Premium-Version:",
                                 color = TextPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp,
-                                modifier = Modifier.padding(bottom = 8.dp)
+                                modifier = Modifier.padding(bottom = 8.dp),
                             )
-                            
+
                             Row(modifier = Modifier.padding(vertical = 4.dp)) {
                                 Text(text = "📱 ", color = AccentBlue)
                                 Text(
                                     text = "Exklusives Deutschland-Radar Homescreen-Widget",
                                     color = TextSecondary,
-                                    fontSize = 13.sp
+                                    fontSize = 13.sp,
                                 )
                             }
                             Row(modifier = Modifier.padding(vertical = 4.dp)) {
@@ -836,7 +925,7 @@ fun RadarScreen(
                                 Text(
                                     text = "Aktualisierung direkt vom Widget aus",
                                     color = TextSecondary,
-                                    fontSize = 13.sp
+                                    fontSize = 13.sp,
                                 )
                             }
                             Row(modifier = Modifier.padding(vertical = 4.dp)) {
@@ -844,30 +933,40 @@ fun RadarScreen(
                                 Text(
                                     text = "Präzise 2-Stunden-Regenvorhersage am Standort",
                                     color = TextSecondary,
-                                    fontSize = 13.sp
+                                    fontSize = 13.sp,
                                 )
                             }
-                            
+
                             Spacer(modifier = Modifier.height(16.dp))
 
-                            val statusText = when {
-                                isPurchased -> "Status: Premium freigeschaltet! Vielen Dank für deine Unterstützung. ❤️"
-                                isPremium -> {
-                                    val installTime = try {
-                                        context.packageManager.getPackageInfo(context.packageName, 0).firstInstallTime
-                                    } catch (e: Exception) { 0L }
-                                    val timeLeftMs = (24 * 60 * 60 * 1000L) - (System.currentTimeMillis() - installTime)
-                                    val hoursLeft = maxOf(0L, timeLeftMs / (1000 * 60 * 60))
-                                    "Status: Kostenlose Testphase aktiv (noch $hoursLeft Std. verbleibend)"
+                            val statusText =
+                                when {
+                                    isPurchased -> {
+                                        "Status: Premium freigeschaltet! Vielen Dank für deine Unterstützung. ❤️"
+                                    }
+
+                                    isPremium -> {
+                                        val installTime =
+                                            try {
+                                                context.packageManager.getPackageInfo(context.packageName, 0).firstInstallTime
+                                            } catch (e: Exception) {
+                                                0L
+                                            }
+                                        val timeLeftMs = (24 * 60 * 60 * 1000L) - (System.currentTimeMillis() - installTime)
+                                        val hoursLeft = maxOf(0L, timeLeftMs / (1000 * 60 * 60))
+                                        "Status: Kostenlose Testphase aktiv (noch $hoursLeft Std. verbleibend)"
+                                    }
+
+                                    else -> {
+                                        "Status: Free-Version (Widget gesperrt)"
+                                    }
                                 }
-                                else -> "Status: Free-Version (Widget gesperrt)"
-                            }
 
                             Text(
                                 text = statusText,
                                 color = if (isPremium) AccentGreen else TextSecondary,
                                 fontWeight = FontWeight.SemiBold,
-                                fontSize = 13.sp
+                                fontSize = 13.sp,
                             )
 
                             if (isPremiumDebug) {
@@ -876,7 +975,7 @@ fun RadarScreen(
                                     text = "⚠️ Entwickler-Bypass ist AKTIV!",
                                     color = Color.Yellow,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp
+                                    fontSize = 12.sp,
                                 )
                             }
                         }
@@ -890,23 +989,25 @@ fun RadarScreen(
                                         billingManager.launchPurchaseFlow(activity)
                                     }
                                 },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = AccentBlue
-                                ),
-                                shape = RoundedCornerShape(7.dp)
+                                colors =
+                                    ButtonDefaults.buttonColors(
+                                        containerColor = AccentBlue,
+                                    ),
+                                shape = RoundedCornerShape(7.dp),
                             ) {
                                 Text(
                                     text = "Freischalten (${productPrice ?: "0,99 €"})",
-                                    color = Color.White
+                                    color = Color.White,
                                 )
                             }
                         } else {
                             Button(
                                 onClick = { showPremiumDialog = false },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = SurfaceBg
-                                ),
-                                shape = RoundedCornerShape(7.dp)
+                                colors =
+                                    ButtonDefaults.buttonColors(
+                                        containerColor = SurfaceBg,
+                                    ),
+                                shape = RoundedCornerShape(7.dp),
                             ) {
                                 Text(text = "Schließen", color = TextPrimary)
                             }
@@ -918,8 +1019,8 @@ fun RadarScreen(
                                 Text(text = "Später", color = TextSecondary)
                             }
                         } else if (isPremiumDebug) {
-                            TextButton(onClick = { 
-                                billingManager.toggleDeveloperBypass() 
+                            TextButton(onClick = {
+                                billingManager.toggleDeveloperBypass()
                             }) {
                                 Text(text = "Bypass deaktivieren", color = Color.Red)
                             }
@@ -928,7 +1029,7 @@ fun RadarScreen(
                     containerColor = SurfaceBg,
                     textContentColor = TextSecondary,
                     titleContentColor = TextPrimary,
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
                 )
             }
         }
@@ -938,82 +1039,88 @@ fun RadarScreen(
 @Composable
 private fun RainIntensityLegend() {
     Column(
-        modifier = Modifier
-            .padding(bottom = 150.dp, end = 12.dp)
-            .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
-            .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-            .padding(10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        modifier =
+            Modifier
+                .padding(bottom = 150.dp, end = 12.dp)
+                .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                .padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
             text = "mm/h",
             color = TextSecondary,
             fontSize = 10.sp,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Bold,
         )
         Spacer(modifier = Modifier.height(6.dp))
         // Clean gradient representing radar intensity
         Box(
-            modifier = Modifier
-                .width(18.dp)
-                .height(110.dp)
-                .clip(RoundedCornerShape(3.dp))
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xFF8B008B), // Violet/Extreme
-                            Color.Red,         // Heavy
-                            Color.Yellow,      // Moderate
-                            Color(0xFF22C55E), // Light
-                            Color.Transparent  // None
-                        )
-                    )
-                )
+            modifier =
+                Modifier
+                    .width(18.dp)
+                    .height(110.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(
+                        Brush.verticalGradient(
+                            colors =
+                                listOf(
+                                    Color(0xFF8B008B), // Violet/Extreme
+                                    Color.Red, // Heavy
+                                    Color.Yellow, // Moderate
+                                    Color(0xFF22C55E), // Light
+                                    Color.Transparent, // None
+                                ),
+                        ),
+                    ),
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = "stark",
             color = TextSecondary,
-            fontSize = 9.sp
+            fontSize = 9.sp,
         )
         Text(
             text = "leicht",
             color = TextSecondary,
-            fontSize = 9.sp
+            fontSize = 9.sp,
         )
     }
 }
 
 @Composable
-private fun PreloadingOverlay(preloadProgress: Float, frameCount: Int) {
+private fun PreloadingOverlay(
+    preloadProgress: Float,
+    frameCount: Int,
+) {
     Column(
-        modifier = Modifier
-            .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
-            .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
-            .padding(horizontal = 24.dp, vertical = 20.dp),
+        modifier =
+            Modifier
+                .background(SurfaceBg.copy(alpha = 0.9f), RoundedCornerShape(7.dp))
+                .border(1.dp, BorderColor, RoundedCornerShape(7.dp))
+                .padding(horizontal = 24.dp, vertical = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Center,
     ) {
         CircularProgressIndicator(
             progress = preloadProgress,
             color = AccentBlue,
             trackColor = BorderColor,
             strokeWidth = 4.dp,
-            modifier = Modifier.size(48.dp)
+            modifier = Modifier.size(48.dp),
         )
         Spacer(modifier = Modifier.height(12.dp))
         Text(
             text = "Lade Radar-Daten...",
             color = TextPrimary,
             fontSize = 14.sp,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Bold,
         )
         Text(
             text = "${(preloadProgress * 100).toInt()}% geladen (${(preloadProgress * frameCount).toInt()} / $frameCount Frames)",
             color = TextSecondary,
             fontSize = 12.sp,
-            modifier = Modifier.padding(top = 4.dp)
+            modifier = Modifier.padding(top = 4.dp),
         )
     }
 }
-
