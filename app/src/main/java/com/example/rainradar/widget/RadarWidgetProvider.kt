@@ -214,6 +214,27 @@ class RadarWidgetProvider : AppWidgetProvider() {
         val isPremium = com.example.rainradar.billing.BillingManager.isPremiumUser(context)
 
         var radarBitmap: Bitmap? = null
+        if (currentFileReady) {
+            val currentFile = DwdWmsClient.getCachedFrameFile(context, currentFrameTime, base)
+            if (currentFile.exists() && currentFile.length() > 0) {
+                try {
+                    val opts = BitmapFactory.Options().apply {
+                        inSampleSize = 2
+                        inMutable = true
+                    }
+                    val rawBmp = BitmapFactory.decodeFile(currentFile.absolutePath, opts)
+                    if (rawBmp != null) {
+                        if (!DwdWmsClient.isWebpFile(currentFile)) {
+                            RadarBitmapUtils.cleanRadarBitmap(rawBmp)
+                        }
+                        radarBitmap = rawBmp
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to decode current radar frame", e)
+                }
+            }
+        }
+
         val zoomMode = prefs.getString(KEY_WIDGET_ZOOM_MODE, "germany") ?: "germany"
         var forecastText = "Regen-Übersicht"
         var locationName = "Deutschland"

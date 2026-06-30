@@ -19,3 +19,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "DwdRainRadar"
 include(":app")
+include(":server")

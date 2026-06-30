@@ -13,6 +13,12 @@ import okhttp3.Request
 object DwdWmsClient {
     const val WMS_BASE_URL = "https://maps.dwd.de/geoserver/ows"
     const val WMS_LAYER = "dwd:Niederschlagsradar"
+    
+    // Set to empty string "" to bypass proxy and fetch directly from DWD
+    val PROXY_URL = com.example.rainradar.BuildConfig.PROXY_URL
+
+    @Volatile
+    var lastDownloadWasFromProxy: Boolean? = null
 
     // Frame layout constants
     const val PAST_FRAME_COUNT = 36
@@ -41,6 +47,10 @@ object DwdWmsClient {
         .withZone(ZoneOffset.UTC)
 
     private val client = OkHttpClient.Builder()
+        .dispatcher(okhttp3.Dispatcher().apply {
+            maxRequests = 100
+            maxRequestsPerHost = 60
+        })
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
@@ -130,6 +140,26 @@ object DwdWmsClient {
     }
 
     /**
+     * Checks if the file has a WebP image signature (starts with "RIFF" and "WEBP").
+     */
+    fun isWebpFile(file: File): Boolean {
+        if (!file.exists() || file.length() < 12) return false
+        return try {
+            file.inputStream().use { stream ->
+                val bytes = ByteArray(12)
+                val read = stream.read(bytes)
+                if (read < 12) return false
+                bytes[0] == 'R'.code.toByte() && bytes[1] == 'I'.code.toByte() &&
+                bytes[2] == 'F'.code.toByte() && bytes[3] == 'F'.code.toByte() &&
+                bytes[8] == 'W'.code.toByte() && bytes[9] == 'E'.code.toByte() &&
+                bytes[10] == 'B'.code.toByte() && bytes[11] == 'P'.code.toByte()
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
      * Cleans up old cache files:
      * - Forecast files whose base time is different from the current base time
      * - History files that are older than oldestAllowed
@@ -210,6 +240,58 @@ object DwdWmsClient {
             return true
         }
 
+        val timeStr = formatIsoTime(time)
+        val baseStr = formatIsoTime(base)
+        val proxyUrl = if (PROXY_URL.isNotEmpty()) {
+            "$PROXY_URL?time=$timeStr&base=$baseStr&width=$WMS_DEFAULT_WIDTH&height=$WMS_DEFAULT_HEIGHT"
+        } else ""
+
+        var success = false
+
+        // 1. Try downloading optimized WebP from our proxy
+        if (proxyUrl.isNotEmpty()) {
+            try {
+                val request = Request.Builder()
+                    .url(proxyUrl)
+                    .header("User-Agent", "DwdRainRadarApp")
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body ?: throw IOException("Empty proxy response body")
+                        val tempFile = File.createTempFile("radar_temp_proxy_", ".tmp", context.cacheDir)
+                        try {
+                            tempFile.outputStream().use { output ->
+                                body.byteStream().copyTo(output)
+                            }
+                            if (tempFile.exists() && tempFile.length() > 0) {
+                                success = if (tempFile.renameTo(file)) {
+                                    true
+                                } else {
+                                    tempFile.copyTo(file, overwrite = true)
+                                    tempFile.delete()
+                                    true
+                                }
+                            }
+                        } finally {
+                            if (tempFile.exists()) {
+                                tempFile.delete()
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DwdWmsClient", "Proxy download failed for $time: ${e.message}. Falling back to DWD directly...")
+            }
+        }
+
+        if (success) {
+            lastDownloadWasFromProxy = true
+            return true
+        }
+
+        // 2. Fallback: Download PNG directly from DWD WMS
+        lastDownloadWasFromProxy = false
         val url = getBBoxWmsUrl(time, base)
         val request = Request.Builder()
             .url(url)
@@ -230,14 +312,14 @@ object DwdWmsClient {
                             body.byteStream().copyTo(output)
                         }
                         if (tempFile.exists() && tempFile.length() > 0) {
-                            val success = if (tempFile.renameTo(file)) {
+                            val dwdSuccess = if (tempFile.renameTo(file)) {
                                 true
                             } else {
                                 tempFile.copyTo(file, overwrite = true)
                                 tempFile.delete()
                                 true
                             }
-                            if (success) return true
+                            if (dwdSuccess) return true
                         }
                     } finally {
                         if (tempFile.exists()) {
@@ -246,7 +328,7 @@ object DwdWmsClient {
                     }
                 }
             } catch (e: Exception) {
-                android.util.Log.w("DwdWmsClient", "Download failed for $time (Attempt $attempt/$maxAttempts): ${e.message}")
+                android.util.Log.w("DwdWmsClient", "DWD fallback download failed for $time (Attempt $attempt/$maxAttempts): ${e.message}")
                 if (attempt < maxAttempts) {
                     try {
                         Thread.sleep(1500L * attempt) // Exponential backoff

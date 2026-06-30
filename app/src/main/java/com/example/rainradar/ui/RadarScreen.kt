@@ -98,6 +98,7 @@ fun RadarScreen(
     val isPreloading by viewModel.isPreloading.collectAsState()
 
     val preloadProgress by viewModel.preloadProgress.collectAsState()
+    val lastDownloadWasFromProxy by viewModel.lastDownloadWasFromProxy.collectAsState()
 
     val billingManager = remember { BillingManager.getInstance(context) }
     val isPremium by billingManager.isPremium.collectAsState()
@@ -389,6 +390,17 @@ fun RadarScreen(
                                 color = TextSecondary,
                                 fontSize = 10.sp
                             )
+                            lastDownloadWasFromProxy?.let { wasFromProxy ->
+                                if (!wasFromProxy) {
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "● DWD Direkt (PNG Fallback)",
+                                        color = Color(0xFFEAB308),
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
                         }
                         Spacer(modifier = Modifier.weight(1f))
 

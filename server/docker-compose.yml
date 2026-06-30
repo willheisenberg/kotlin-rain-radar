@@ -1,0 +1,9 @@
+services:
+  dwd-radar-proxy:
+    build: .
+    container_name: dwd-radar-proxy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./cache:/app/cache
+    restart: unless-stopped
