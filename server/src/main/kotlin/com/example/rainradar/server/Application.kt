@@ -19,6 +19,7 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
 import java.time.Instant
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import javax.imageio.IIOImage
 import javax.imageio.ImageIO
@@ -37,7 +38,7 @@ private val dwdSemaphore = kotlinx.coroutines.sync.Semaphore(10)
 private val httpClient =
     HttpClient
         .newBuilder()
-        .connectTimeout(Duration.ofSeconds(10))
+        .connectTimeout(Duration.ofSeconds(5))
         .build()
 
 fun main() {
@@ -185,7 +186,7 @@ private fun fetchAndProcessRadar(
             .newBuilder()
             .uri(URI.create(dwdUrl))
             .header("User-Agent", "DwdRainRadarProxyServer")
-            .timeout(Duration.ofSeconds(15))
+            .timeout(Duration.ofSeconds(10))
             .GET()
             .build()
 
@@ -390,9 +391,7 @@ private fun cleanOldDiskCache(
 
 private suspend fun preCacheRadarFrames() {
     val base = getRoundedBaseTime()
-    if (base == lastCachedBaseTime) {
-        return
-    }
+    if (base == lastCachedBaseTime) return
 
     logger.info("New base time detected: $base. Pre-caching all 60 frames...")
     val times = generateCombinedFrameTimes(base)
@@ -400,6 +399,26 @@ private suspend fun preCacheRadarFrames() {
     val oldestAllowed = base.minus(Duration.ofHours(6))
     cleanOldDiskCache(oldestAllowed, times, base)
 
+    val failed = fetchFrameBatch(times, base)
+
+    if (failed.isNotEmpty()) {
+        logger.info("${failed.size} frames failed. Retrying in 15 seconds...")
+        delay(15_000)
+        val stillFailed = fetchFrameBatch(failed, base)
+        if (stillFailed.isNotEmpty()) {
+            logger.warn("${stillFailed.size} frames still failed after retry: $stillFailed")
+        }
+    }
+
+    lastCachedBaseTime = base
+    logger.info("Pre-caching completed for base time: $base")
+}
+
+private suspend fun fetchFrameBatch(
+    times: List<Instant>,
+    base: Instant,
+): List<Instant> {
+    val failed = Collections.synchronizedList(mutableListOf<Instant>())
     coroutineScope {
         times.forEach { timeInstant ->
             launch {
@@ -427,6 +446,8 @@ private suspend fun preCacheRadarFrames() {
                             } catch (e: Exception) {
                                 logger.warn("Failed to write pre-cached file: ${e.message}")
                             }
+                        } else {
+                            failed.add(timeInstant)
                         }
                     }
                 } finally {
@@ -435,7 +456,5 @@ private suspend fun preCacheRadarFrames() {
             }
         }
     }
-
-    lastCachedBaseTime = base
-    logger.info("Pre-caching completed for base time: $base")
+    return failed
 }
