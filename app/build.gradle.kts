@@ -21,14 +21,14 @@ val formattedProxyUrl = if (rawProxyUrl.startsWith("\"") && rawProxyUrl.endsWith
 
 android {
     namespace = "com.example.rainradar"
-    compileSdk = 35
+    compileSdk = 36
     buildToolsVersion = "37.0.0"
 
     defaultConfig {
         applicationId = "com.example.rainradar"
         buildConfigField("String", "PROXY_URL", formattedProxyUrl)
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "0.2.0"
 
