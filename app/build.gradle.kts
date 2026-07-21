@@ -21,16 +21,16 @@ val formattedProxyUrl = if (rawProxyUrl.startsWith("\"") && rawProxyUrl.endsWith
 
 android {
     namespace = "com.example.rainradar"
-    compileSdk = 35
+    compileSdk = 36
     buildToolsVersion = "37.0.0"
 
     defaultConfig {
         applicationId = "de.willheisenberg.openrain"
         buildConfigField("String", "PROXY_URL", formattedProxyUrl)
         minSdk = 26
-        targetSdk = 35
-        versionCode = 7
-        versionName = "0.2.6"
+        targetSdk = 36
+        versionCode = 8
+        versionName = "0.2.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -90,7 +90,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Google Play Billing
-    implementation("com.android.billingclient:billing-ktx:7.0.0")
+    implementation("com.android.billingclient:billing-ktx:9.1.0")
 
     // Tooling/Testing
     testImplementation("junit:junit:4.13.2")
