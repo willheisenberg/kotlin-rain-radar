@@ -13,6 +13,7 @@ local.properties
 *.apks
 *.aab
 app/release/
+server/bin/
 
 # Certificates and keys
 *.jks
