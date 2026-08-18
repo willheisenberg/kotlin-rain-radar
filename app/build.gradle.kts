@@ -29,8 +29,8 @@ android {
         buildConfigField("String", "PROXY_URL", formattedProxyUrl)
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.2.7"
+        versionCode = 9
+        versionName = "0.2.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
