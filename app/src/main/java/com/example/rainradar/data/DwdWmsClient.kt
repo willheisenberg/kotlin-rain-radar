@@ -1,14 +1,15 @@
 package com.example.rainradar.data
 
 import android.content.Context
-import okhttp3.OkHttpClient
-import okhttp3.Request
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
-import java.util.concurrent.TimeUnit
 
 object DwdWmsClient {
     const val WMS_BASE_URL = "https://maps.dwd.de/geoserver/ows"
@@ -44,17 +45,10 @@ object DwdWmsClient {
             .ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
             .withZone(ZoneOffset.UTC)
 
-    private val client =
-        OkHttpClient
-            .Builder()
-            .dispatcher(
-                okhttp3.Dispatcher().apply {
-                    maxRequests = 100
-                    maxRequestsPerHost = 60
-                },
-            ).connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
-            .build()
+    private val downloader =
+        RadarHttpClient(
+            onProxyFailure = { android.util.Log.w("DwdWmsClient", it) },
+        )
 
     fun formatIsoTime(instant: Instant): String = isoFormatter.format(instant)
 
@@ -149,7 +143,7 @@ object DwdWmsClient {
         base: Instant = getRoundedBaseTime(),
     ): Boolean {
         val file = getCachedFrameFile(context, time, base)
-        return file.exists() && file.length() > 0
+        return isValidImage(file)
     }
 
     /**
@@ -253,124 +247,58 @@ object DwdWmsClient {
      * Downloads the WMS image for a given timestamp and caches it.
      * Uses a temp file during download to avoid saving incomplete/corrupt files.
      */
-    fun downloadFrame(
+    suspend fun downloadFrame(
         context: Context,
         time: Instant,
         base: Instant = getRoundedBaseTime(),
         force: Boolean = false,
-    ): Boolean {
-        val file = getCachedFrameFile(context, time, base)
-        if (!force && file.exists() && file.length() > 0) {
-            return true
-        }
-
-        val timeStr = formatIsoTime(time)
-        val baseStr = formatIsoTime(base)
-        val proxyUrl =
-            if (PROXY_URL.isNotEmpty()) {
-                "$PROXY_URL?time=$timeStr&base=$baseStr&width=$WMS_DEFAULT_WIDTH&height=$WMS_DEFAULT_HEIGHT"
-            } else {
-                ""
+        onSource: (FrameSource) -> Unit = {},
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            val file = getCachedFrameFile(context, time, base)
+            if (!force && isValidImage(file)) {
+                onSource(FrameSource.CACHE)
+                return@withContext true
             }
-
-        var success = false
-
-        // 1. Try downloading optimized WebP from our proxy
-        if (proxyUrl.isNotEmpty()) {
+            val proxyUrl =
+                PROXY_URL.takeIf { it.isNotBlank() }?.let {
+                    "$it?time=${formatIsoTime(time)}&base=${formatIsoTime(base)}" +
+                        "&width=$WMS_DEFAULT_WIDTH&height=$WMS_DEFAULT_HEIGHT"
+                }
             try {
-                val request =
-                    Request
-                        .Builder()
-                        .url(proxyUrl)
-                        .header("User-Agent", "DwdRainRadarApp")
-                        .build()
-
-                client.newCall(request).execute().use { response ->
-                    if (response.isSuccessful) {
-                        val body = response.body ?: throw IOException("Empty proxy response body")
-                        val tempFile = File.createTempFile("radar_temp_proxy_", ".tmp", context.cacheDir)
-                        try {
-                            tempFile.outputStream().use { output ->
-                                body.byteStream().copyTo(output)
-                            }
-                            if (tempFile.exists() && tempFile.length() > 0) {
-                                success =
-                                    if (tempFile.renameTo(file)) {
-                                        true
-                                    } else {
-                                        tempFile.copyTo(file, overwrite = true)
-                                        tempFile.delete()
-                                        true
-                                    }
-                            }
-                        } finally {
-                            if (tempFile.exists()) {
-                                tempFile.delete()
-                            }
-                        }
+                val bytes =
+                    downloader.download(proxyUrl, getBBoxWmsUrl(time, base), onSource) { data ->
+                        val options =
+                            android.graphics.BitmapFactory
+                                .Options()
+                                .apply { inJustDecodeBounds = true }
+                        android.graphics.BitmapFactory.decodeByteArray(data, 0, data.size, options)
+                        if (options.outWidth <= 0 || options.outHeight <= 0) throw IOException("Invalid radar image")
                     }
+                currentCoroutineContext().ensureActive()
+                val temp = File.createTempFile("radar_download_", ".tmp", file.parentFile)
+                try {
+                    temp.writeBytes(bytes)
+                    currentCoroutineContext().ensureActive()
+                    if (!temp.renameTo(file)) throw IOException("Could not publish radar image")
+                } finally {
+                    temp.delete()
                 }
-            } catch (e: Exception) {
-                android.util.Log.w("DwdWmsClient", "Proxy download failed for $time: ${e.message}. Falling back to DWD directly...")
+                true
+            } catch (error: IOException) {
+                android.util.Log.w("DwdWmsClient", "Download failed for $time: ${error.message}")
+                false
             }
         }
 
-        if (success) {
-            return true
-        }
-
-        // 2. Fallback: Download PNG directly from DWD WMS
-        val url = getBBoxWmsUrl(time, base)
-        val request =
-            Request
-                .Builder()
-                .url(url)
-                .header("User-Agent", "DwdRainRadarApp")
-                .build()
-
-        val maxAttempts = 3
-        for (attempt in 1..maxAttempts) {
-            try {
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        throw IOException("Unexpected HTTP code $response")
-                    }
-                    val body = response.body ?: throw IOException("Empty response body")
-                    val tempFile = File.createTempFile("radar_temp_", ".tmp", context.cacheDir)
-                    try {
-                        tempFile.outputStream().use { output ->
-                            body.byteStream().copyTo(output)
-                        }
-                        if (tempFile.exists() && tempFile.length() > 0) {
-                            val dwdSuccess =
-                                if (tempFile.renameTo(file)) {
-                                    true
-                                } else {
-                                    tempFile.copyTo(file, overwrite = true)
-                                    tempFile.delete()
-                                    true
-                                }
-                            if (dwdSuccess) return true
-                        }
-                    } finally {
-                        if (tempFile.exists()) {
-                            tempFile.delete()
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                android.util.Log.w("DwdWmsClient", "DWD fallback download failed for $time (Attempt $attempt/$maxAttempts): ${e.message}")
-                if (attempt < maxAttempts) {
-                    try {
-                        Thread.sleep(1500L * attempt) // Exponential backoff
-                    } catch (ie: InterruptedException) {
-                        Thread.currentThread().interrupt()
-                        break
-                    }
-                }
-            }
-        }
-        return false
+    private fun isValidImage(file: File): Boolean {
+        if (!file.isFile || file.length() == 0L) return false
+        val options =
+            android.graphics.BitmapFactory
+                .Options()
+                .apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+        return options.outWidth > 0 && options.outHeight > 0
     }
 
     /**

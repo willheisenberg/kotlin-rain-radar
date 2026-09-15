@@ -27,6 +27,8 @@ import androidx.compose.material3.*
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -97,6 +99,8 @@ fun RadarScreen(
     val isPlaying by viewModel.isPlaying.collectAsState()
     val isPreloading by viewModel.isPreloading.collectAsState()
 
+    val frameRevision by viewModel.frameRevision.collectAsState()
+    val loadStatus by viewModel.loadStatus.collectAsState()
     val preloadProgress by viewModel.preloadProgress.collectAsState()
     // Observe App Lifecycle: reset to Now on ON_RESUME and stop playback on ON_PAUSE
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -340,6 +344,7 @@ fun RadarScreen(
             RadarMapView(
                 frameTimes = frameTimes,
                 activeFrameIndex = activeFrameIndex,
+                frameRevision = frameRevision,
                 userLocation = userLocation,
                 isPreloading = isPreloading,
                 modifier = Modifier.fillMaxSize(),
@@ -609,7 +614,7 @@ fun RadarScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
-                            contentDescription = "Cache leeren & aktualisieren",
+                            contentDescription = "Radardaten neu laden",
                             tint = TextPrimary,
                             modifier = Modifier.size(18.dp),
                         )
@@ -665,6 +670,7 @@ fun RadarScreen(
                 PreloadingOverlay(
                     preloadProgress = preloadProgress,
                     frameCount = frameTimes.size,
+                    loadStatus = loadStatus,
                 )
             }
 
@@ -798,7 +804,7 @@ fun RadarScreen(
                                         modifier = Modifier.border(2.dp, Color.White, CircleShape),
                                     )
                                 },
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Radar-Zeit" },
                             )
                         }
 
@@ -818,6 +824,7 @@ fun RadarScreen(
                             modifier = Modifier.width(50.dp),
                         )
                     }
+
                 }
             }
         }
@@ -877,9 +884,10 @@ private fun RainIntensityLegend() {
 }
 
 @Composable
-private fun PreloadingOverlay(
+internal fun PreloadingOverlay(
     preloadProgress: Float,
     frameCount: Int,
+    loadStatus: RadarLoadStatus,
 ) {
     Column(
         modifier =
@@ -905,10 +913,17 @@ private fun PreloadingOverlay(
             fontWeight = FontWeight.Bold,
         )
         Text(
-            text = "${(preloadProgress * 100).toInt()}% geladen (${(preloadProgress * frameCount).toInt()} / $frameCount Frames)",
+            text = "${(preloadProgress * 100).toInt()}% geladen (${loadStatus.ready} / $frameCount Frames)",
             color = TextSecondary,
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp),
+        )
+        Text(
+            text = loadStatus.description,
+            color = TextSecondary,
+            fontSize = 11.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.padding(top = 8.dp),
         )
     }
 }

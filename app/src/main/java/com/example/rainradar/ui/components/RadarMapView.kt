@@ -15,10 +15,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.example.rainradar.data.DwdWmsClient
-import com.example.rainradar.data.RadarBitmapUtils
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.withContext
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
@@ -66,140 +62,17 @@ fun RadarMapView(
     activeFrameIndex: Int,
     userLocation: LatLng?,
     isPreloading: Boolean,
+    frameRevision: Long = 0L,
     modifier: Modifier = Modifier,
     onMapClick: () -> Unit = {},
     onMapReady: (MapLibreMap) -> Unit = {}
 ) {
     val context = LocalContext.current
-    val bitmapCache = remember { android.util.LruCache<String, android.graphics.Bitmap>(15) }
-    var activeBitmapState by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
-
-    // Track the base time derived from frameTimes. When it changes (e.g. after
-    // the app resumes from background), evict the in-memory bitmap cache so
-    // stale decoded images are not served.
-    val currentBase = frameTimes.getOrNull(DwdWmsClient.PAST_FRAME_COUNT)
-    var lastSeenBase by remember { mutableStateOf<Instant?>(null) }
-    if (currentBase != null && currentBase != lastSeenBase) {
-        if (lastSeenBase != null) {
-            bitmapCache.evictAll()
-        }
-        lastSeenBase = currentBase
-    }
-
-    LaunchedEffect(activeFrameIndex, frameTimes, isPreloading) {
-        if (isPreloading || frameTimes.isEmpty()) {
-            activeBitmapState = null
-            return@LaunchedEffect
-        }
-        
-        val base = frameTimes.getOrNull(DwdWmsClient.PAST_FRAME_COUNT) ?: DwdWmsClient.getRoundedBaseTime()
-
-        withContext(Dispatchers.IO) {
-            var targetIndex = -1
-            if (activeFrameIndex in frameTimes.indices) {
-                val file = DwdWmsClient.getCachedFrameFile(context, frameTimes[activeFrameIndex], base)
-                if (file.exists() && file.length() > 0) {
-                    targetIndex = activeFrameIndex
-                } else {
-                    for (j in activeFrameIndex - 1 downTo 0) {
-                        val f = DwdWmsClient.getCachedFrameFile(context, frameTimes[j], base)
-                        if (f.exists() && f.length() > 0) {
-                            targetIndex = j
-                            break
-                        }
-                    }
-                    if (targetIndex == -1) {
-                        for (j in activeFrameIndex + 1 until frameTimes.size) {
-                            val f = DwdWmsClient.getCachedFrameFile(context, frameTimes[j], base)
-                            if (f.exists() && f.length() > 0) {
-                                targetIndex = j
-                                break
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (targetIndex == -1) {
-                if (isActive) {
-                    activeBitmapState = null
-                }
-                return@withContext
-            }
-
-            val targetTime = frameTimes[targetIndex]
-            val timeStr = DwdWmsClient.formatIsoTime(targetTime)
-            
-            val cached = bitmapCache.get(timeStr)
-            if (cached != null) {
-                if (isActive) {
-                    activeBitmapState = cached
-                }
-                return@withContext
-            }
-
-            val file = DwdWmsClient.getCachedFrameFile(context, targetTime, base)
-            val decodeOpts = android.graphics.BitmapFactory.Options().apply {
-                inSampleSize = 2
-                inMutable = true
-            }
-
-            try {
-                if (!isActive) return@withContext
-                val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
-                if (decoded != null) {
-                    if (!isActive) return@withContext
-                    if (!DwdWmsClient.isWebpFile(file)) {
-                        RadarBitmapUtils.cleanRadarBitmap(decoded)
-                    }
-                    
-                    if (!isActive) return@withContext
-                    bitmapCache.put(timeStr, decoded)
-                    activeBitmapState = decoded
-                } else {
-                    if (file.exists()) {
-                        file.delete()
-                    }
-                    if (isActive) {
-                        activeBitmapState = null
-                    }
-                }
-            } catch (e: OutOfMemoryError) {
-                bitmapCache.evictAll()
-                System.gc()
-                
-                try {
-                    if (!isActive) return@withContext
-                    val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
-                    if (decoded != null) {
-                        if (!isActive) return@withContext
-                        if (!DwdWmsClient.isWebpFile(file)) {
-                            RadarBitmapUtils.cleanRadarBitmap(decoded)
-                        }
-                        
-                        if (!isActive) return@withContext
-                        bitmapCache.put(timeStr, decoded)
-                        activeBitmapState = decoded
-                    } else {
-                        if (file.exists()) {
-                            file.delete()
-                        }
-                        if (isActive) {
-                            activeBitmapState = null
-                        }
-                    }
-                } catch (e2: Throwable) {
-                    if (isActive) {
-                        activeBitmapState = null
-                    }
-                }
-            } catch (e: Exception) {
-                if (isActive) {
-                    activeBitmapState = null
-                }
-            }
-        }
-    }
+    val activeBitmapState by rememberRadarBitmap(
+        time = if (isPreloading) null else frameTimes.getOrNull(activeFrameIndex),
+        base = frameTimes.getOrNull(DwdWmsClient.PAST_FRAME_COUNT),
+        revision = frameRevision,
+    )
 
     var mapInstance by remember { mutableStateOf<MapLibreMap?>(null) }
 
@@ -223,7 +96,6 @@ fun RadarMapView(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            bitmapCache.evictAll()
             mapView.onDestroy()
         }
     }
@@ -414,8 +286,5 @@ fun RadarMapView(
         }
     }
 
-    AndroidView(
-        factory = { mapView },
-        modifier = modifier
-    )
+    AndroidView(factory = { mapView }, modifier = modifier)
 }
