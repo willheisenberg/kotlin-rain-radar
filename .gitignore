@@ -13,3 +13,8 @@ local.properties
 # Claude Code
 .claude/
 CLAUDE.md
+# Python development scripts
+__pycache__/
+
+# Compiled server output from IDE plugins
+server/bin/
