@@ -11,12 +11,11 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.withPermit
 import org.slf4j.LoggerFactory
 import java.awt.image.BufferedImage
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.io.File
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import java.time.Duration
 import java.time.Instant
 import java.util.Collections
@@ -32,14 +31,35 @@ private val memoryCache = ConcurrentHashMap<String, ByteArray>()
 private val cacheDir = File("cache").apply { if (!exists()) mkdirs() }
 
 // Limits concurrent DWD fetches from both on-demand requests and pre-cache loop
-private val dwdSemaphore = kotlinx.coroutines.sync.Semaphore(10)
+private val dwdSemaphore = kotlinx.coroutines.sync.Semaphore(5)
 
-// HTTP client for fetching from DWD WMS
-private val httpClient =
-    HttpClient
-        .newBuilder()
-        .connectTimeout(Duration.ofSeconds(5))
-        .build()
+private val upstream = RadarUpstream()
+private val preloadGate = PreloadGate()
+private val radarCache = RadarCache(memoryCache)
+
+private suspend fun cachedRadar(cacheKey: String, time: String, base: String, width: Int, height: Int): ByteArray? =
+    radarCache.getOrLoad(cacheKey) {
+        withContext(Dispatchers.IO) {
+            val file = File(cacheDir, "$cacheKey.webp")
+            if (file.isFile && file.length() > 0) {
+                file.readBytes()
+            } else {
+                dwdSemaphore.withPermit {
+                    logger.info("Cache miss for key: $cacheKey. Fetching from DWD...")
+                    fetchAndProcessRadar(time, base, width, height)?.also { bytes ->
+                        val temporary = File.createTempFile("radar-", ".tmp", cacheDir)
+                        try {
+                            temporary.writeBytes(bytes)
+                            Files.move(temporary.toPath(), file.toPath(),
+                                StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                        } finally {
+                            temporary.delete()
+                        }
+                    }
+                }
+            }
+        }
+    }
 
 fun main() {
     embeddedServer(Netty, port = 8080, host = "0.0.0.0", module = Application::module)
@@ -59,6 +79,8 @@ fun Application.module() {
         while (isActive) {
             try {
                 preCacheRadarFrames()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 logger.error("Error in background pre-caching loop: ${e.message}", e)
             }
@@ -122,34 +144,12 @@ fun Application.module() {
                 launch(Dispatchers.IO) { preCacheRadarFrames() }
             }
 
-            // 1. Try In-Memory Cache
-            val cachedBytes = memoryCache[cacheKey]
-            if (cachedBytes != null) {
-                call.respondBytes(cachedBytes, ContentType.parse("image/webp"))
-                return@get
-            }
-
-            // 2. Try Disk Cache
-            val diskFile = File(cacheDir, "$cacheKey.webp")
-            if (diskFile.exists() && diskFile.length() > 0) {
-                val bytes = diskFile.readBytes()
-                memoryCache[cacheKey] = bytes
-                call.respondBytes(bytes, ContentType.parse("image/webp"))
-                return@get
-            }
-
-            // 3. Cache Miss - Fix 2: limit concurrent DWD fetches via shared semaphore
-            logger.info("Cache miss for key: $cacheKey. Fetching from DWD...")
-            val webpBytes = dwdSemaphore.withPermit { fetchAndProcessRadar(time, base ?: "0", width, height) }
-
+            val cachedAtArrival = memoryCache.containsKey(cacheKey)
+            val started = System.nanoTime()
+            val webpBytes = cachedRadar(cacheKey, time, base ?: "0", width, height)
+            call.response.headers.append("X-Radar-Cache", if (cachedAtArrival) "memory" else "not-in-memory")
+            call.response.headers.append("Server-Timing", "radar;dur=${(System.nanoTime() - started) / 1_000_000}")
             if (webpBytes != null) {
-                // Save to caches
-                memoryCache[cacheKey] = webpBytes
-                try {
-                    diskFile.writeBytes(webpBytes)
-                } catch (e: Exception) {
-                    logger.warn("Failed to write cache file to disk: ${e.message}")
-                }
                 call.respondBytes(webpBytes, ContentType.parse("image/webp"))
             } else {
                 call.respondText("Failed to retrieve or process radar frame from DWD", status = HttpStatusCode.BadGateway)
@@ -162,7 +162,7 @@ fun Application.module() {
  * Fetches the PNG from maps.dwd.de, removes gray/pink/blend background pixels,
  * and encodes the result into WebP.
  */
-private fun fetchAndProcessRadar(
+private suspend fun fetchAndProcessRadar(
     time: String,
     base: String,
     width: Int,
@@ -181,37 +181,20 @@ private fun fetchAndProcessRadar(
             "&TIME=$time" +
             "&_cb=$base"
 
-    val request =
-        HttpRequest
-            .newBuilder()
-            .uri(URI.create(dwdUrl))
-            .header("User-Agent", "DwdRainRadarProxyServer")
-            .timeout(Duration.ofSeconds(10))
-            .GET()
-            .build()
-
     repeat(2) { attempt ->
         try {
-            val response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream())
-            if (response.statusCode() != 200) {
-                logger.warn("DWD returned HTTP ${response.statusCode()} for $time (attempt ${attempt + 1})")
-                if (attempt == 0) Thread.sleep(500)
-                return@repeat
-            }
-
-            response.body().use { inputStream ->
-                val image = ImageIO.read(inputStream)
-                if (image == null) {
-                    logger.warn("DWD returned non-image data for $time (attempt ${attempt + 1})")
-                    if (attempt == 0) Thread.sleep(500)
-                    return@repeat
-                }
-                cleanRadarImage(image)
-                return compressToWebP(image)
-            }
-        } catch (e: Exception) {
-            logger.warn("Error fetching radar frame for $time (attempt ${attempt + 1}): ${e.message}")
-            if (attempt == 0) Thread.sleep(500)
+            val bytes = upstream.read(dwdUrl)
+            // ImageIO only sees a complete local buffer. A stalled network body
+            // can no longer hold a download slot indefinitely inside its decoder.
+            val image = ImageIO.read(ByteArrayInputStream(bytes))
+                ?: throw java.io.IOException("DWD returned non-image data")
+            cleanRadarImage(image)
+            return compressToWebP(image)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            logger.warn("Error fetching radar frame for $time (attempt ${attempt + 1}): ${error.message}")
+            if (attempt == 0) delay(500)
         }
     }
     logger.error("All attempts failed for radar frame at $time")
@@ -389,16 +372,14 @@ private fun cleanOldDiskCache(
 
 @Volatile private var lastCachedBaseTime: Instant? = null
 
-private suspend fun preCacheRadarFrames() {
+private suspend fun preCacheRadarFrames() = preloadGate.run {
     val base = getRoundedBaseTime()
-    if (base == lastCachedBaseTime) return
+    if (base == lastCachedBaseTime) return@run
 
     logger.info("New base time detected: $base. Pre-caching all 60 frames...")
     val times = generateCombinedFrameTimes(base)
 
     val oldestAllowed = base.minus(Duration.ofHours(6))
-    cleanOldDiskCache(oldestAllowed, times, base)
-
     val failed = fetchFrameBatch(times, base)
 
     if (failed.isNotEmpty()) {
@@ -410,8 +391,20 @@ private suspend fun preCacheRadarFrames() {
         }
     }
 
-    lastCachedBaseTime = base
-    logger.info("Pre-caching completed for base time: $base")
+    if (times.all { time ->
+            val key = if (time >= base) "frame_${time}_base_${base}_1920x2084" else "frame_${time}_1920x2084"
+            memoryCache.containsKey(key) || File(cacheDir, "$key.webp").isFile
+        }) {
+        lastCachedBaseTime = base
+        cleanOldDiskCache(oldestAllowed, times, base)
+        val activeKeys = times.map { time ->
+            if (time >= base) "frame_${time}_base_${base}_1920x2084" else "frame_${time}_1920x2084"
+        }.toSet()
+        memoryCache.keys.retainAll(activeKeys)
+        logger.info("Pre-caching completed for base time: $base")
+    } else {
+        logger.warn("Pre-caching incomplete for base time: $base; retaining previous cache and retrying next cycle")
+    }
 }
 
 private suspend fun fetchFrameBatch(
@@ -421,37 +414,13 @@ private suspend fun fetchFrameBatch(
     val failed = Collections.synchronizedList(mutableListOf<Instant>())
     coroutineScope {
         times.forEach { timeInstant ->
-            launch {
-                dwdSemaphore.acquire()
-                try {
-                    val timeStr = timeInstant.toString()
-                    val baseStr = base.toString()
-
-                    val isForecast = timeInstant.epochSecond >= base.epochSecond
-                    val cacheKey =
-                        if (isForecast) {
-                            "frame_${timeStr}_base_${baseStr}_1920x2084"
-                        } else {
-                            "frame_${timeStr}_1920x2084"
-                        }
-
-                    val diskFile = File(cacheDir, "$cacheKey.webp")
-                    if (!diskFile.exists() || diskFile.length() == 0L) {
-                        logger.info("Pre-caching miss for key: $cacheKey. Fetching...")
-                        val webpBytes = fetchAndProcessRadar(timeStr, if (isForecast) baseStr else "0", 1920, 2084)
-                        if (webpBytes != null) {
-                            memoryCache[cacheKey] = webpBytes
-                            try {
-                                diskFile.writeBytes(webpBytes)
-                            } catch (e: Exception) {
-                                logger.warn("Failed to write pre-cached file: ${e.message}")
-                            }
-                        } else {
-                            failed.add(timeInstant)
-                        }
-                    }
-                } finally {
-                    dwdSemaphore.release()
+            launch(Dispatchers.IO) {
+                val timeStr = timeInstant.toString()
+                val baseStr = base.toString()
+                val isForecast = timeInstant >= base
+                val key = if (isForecast) "frame_${timeStr}_base_${baseStr}_1920x2084" else "frame_${timeStr}_1920x2084"
+                if (cachedRadar(key, timeStr, if (isForecast) baseStr else "0", 1920, 2084) == null) {
+                    failed.add(timeInstant)
                 }
             }
         }

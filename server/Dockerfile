@@ -9,6 +9,7 @@ FROM eclipse-temurin:17-jre-alpine
 RUN apk add --no-cache bash
 RUN mkdir /app
 WORKDIR /app
+ENV JAVA_OPTS="-Xms128m -Xmx768m"
 COPY --from=build /home/gradle/src/build/install/dwd-radar-proxy /app
 EXPOSE 8080
 CMD ["./bin/dwd-radar-proxy"]

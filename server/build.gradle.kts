@@ -13,6 +13,10 @@ dependencies {
     implementation("io.ktor:ktor-server-netty-jvm:2.3.12")
     implementation("io.ktor:ktor-server-status-pages-jvm:2.3.12")
     
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    testImplementation(kotlin("test-junit"))
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+
     // Logging
     implementation("ch.qos.logback:logback-classic:1.4.14")
     
