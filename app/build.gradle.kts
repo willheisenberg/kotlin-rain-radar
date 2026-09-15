@@ -12,12 +12,19 @@ val localProperties = Properties().apply {
         localPropertiesFile.inputStream().use { load(it) }
     }
 }
-val rawProxyUrl = localProperties.getProperty("proxy.url") ?: "http://10.0.2.2:8080/radar"
+val rawProxyUrl = providers.gradleProperty("radarProxyUrl").orNull
+    ?: localProperties.getProperty("proxy.url") ?: ""
 val formattedProxyUrl = if (rawProxyUrl.startsWith("\"") && rawProxyUrl.endsWith("\"")) {
     rawProxyUrl
 } else {
     "\"$rawProxyUrl\""
 }
+
+// Signing details stay in local.properties (not in version control). Without them
+// the release build stays unsigned, so a missing keystore never breaks the build.
+val releaseKeystore = localProperties.getProperty("keystore.path")
+    ?.let { rootProject.file(it) }
+    ?.takeIf { it.isFile }
 
 android {
     namespace = "com.example.rainradar"
@@ -25,7 +32,7 @@ android {
     buildToolsVersion = "37.0.0"
 
     defaultConfig {
-        applicationId = "com.example.rainradar"
+        applicationId = "de.willheisenberg.openrain"
         buildConfigField("String", "PROXY_URL", formattedProxyUrl)
         minSdk = 26
         targetSdk = 36
@@ -38,8 +45,21 @@ android {
         }
     }
 
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = releaseKeystore
+                storePassword = localProperties.getProperty("keystore.password")
+                keyAlias = localProperties.getProperty("key.alias")
+                keyPassword = localProperties.getProperty("key.password")
+                    ?: localProperties.getProperty("keystore.password")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -91,8 +111,9 @@ dependencies {
 
     // Tooling/Testing
     testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.02.00"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
