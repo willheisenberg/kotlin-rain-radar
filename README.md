@@ -38,6 +38,185 @@ The app follows modern Android architecture guidelines (MVVM) and optionally uti
 2. Let Gradle sync the project.
 3. Start the app on an Android emulator or a physical device (requires Android API 26+).
 
+### ADB and scrcpy workflow
+
+Requires Python 3, an Android SDK with an AVD, and `scrcpy` for mirroring/recording.
+The script reads the SDK path from `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or
+`local.properties`. Gradle uses this project's configured JVM toolchain.
+
+#### Emulator und scrcpy starten
+
+Alle Befehle im Projektordner ausführen. **Emulator und scrcpy sind zwei getrennte
+Programme:** Der Emulator führt Android aus; scrcpy zeigt dessen Bildschirm und
+ermöglicht die Bedienung. Das Schließen von scrcpy beendet den Emulator nicht.
+
+Zuerst prüfen, was bereits läuft:
+
+```bash
+scripts/android-dev.py doctor
+# Alternativ: nur verbundene Geräte anzeigen
+adb devices -l
+```
+
+Steht dort beispielsweise `emulator-5554` mit Status `device`, läuft bereits ein
+Emulator. Dann direkt mit Terminal 2 weitermachen. Ein weiterer Start desselben
+AVD führt zur Meldung „Running multiple emulators with the same AVD“. Dafür ist
+kein zweiter Emulator und kein `-read-only` nötig.
+
+**Terminal 1 – nur falls der Emulator noch nicht läuft:**
+
+```bash
+scripts/android-dev.py emulator --avd Pixel_8
+```
+
+Das Terminal bleibt belegt. Standardmäßig startet der Emulator **ohne eigenes
+Fenster** (`-no-window`), läuft aber trotzdem. Für ein eigenes Emulatorfenster:
+
+```bash
+scripts/android-dev.py emulator --avd Pixel_8 --window
+```
+
+Diese beiden Startbefehle sind Alternativen. Andere verfügbare AVD-Namen zeigt
+`doctor` an.
+
+**Terminal 2 – nach dem Android-Start:**
+
+```bash
+# App bauen, installieren und öffnen
+scripts/android-dev.py run
+# Bildschirm anzeigen und mit Maus/Tastatur bedienen
+scripts/android-dev.py mirror
+```
+
+Ist die App bereits installiert und geöffnet, reicht `mirror`. Für die vorhandene
+Debug-APK ohne erneuten Build: `scripts/android-dev.py run --no-build`.
+
+#### scrcpy und Emulator wieder beenden
+
+- **Nur scrcpy schließen:** Fenster schließen oder im Terminal von `mirror`
+  **Strg+C** drücken. Android und die App laufen im Emulator weiter.
+- **Eine Aufnahme beenden:** `record --seconds 30` endet nach 30 Sekunden von
+  selbst. Vorzeitig im Aufnahme-Terminal **Strg+C** drücken.
+- **Emulator vollständig beenden:** Im Start-Terminal des Emulators **Strg+C**
+  drücken. Ist das Terminal nicht mehr verfügbar oder wurde der Emulator von
+  einem anderen Prozess gestartet, den folgenden ADB-Befehl verwenden.
+
+```bash
+# Seriennummer des laufenden Emulators ermitteln
+adb devices -l
+# Genau diese Emulatorinstanz beenden (Seriennummer ggf. anpassen)
+adb -s emulator-5554 emu kill
+# Prüfen: Der Emulator sollte nicht mehr in der Liste stehen
+adb devices -l
+```
+
+`emu kill` beendet den Emulator auch dann, wenn er unsichtbar im Hintergrund
+läuft. Verbundene scrcpy-Sitzungen verlieren dabei ihre Verbindung. Installierte
+Apps und App-Daten bleiben erhalten; das Skript startet mit `-no-snapshot-save`,
+also ohne beim Beenden einen neuen Snapshot des laufenden Zustands anzulegen.
+
+Falls auch der lokale ADB-Dienst nicht mehr benötigt wird:
+
+```bash
+adb kill-server
+```
+
+Das ist optional und betrifft alle lokalen ADB-Verbindungen, auch Android Studio.
+**`adb kill-server` beendet keine Emulatoren**; dafür zuerst `emu kill` verwenden.
+Ein späterer ADB-Aufruf startet den Dienst bei Bedarf erneut.
+
+With multiple emulators, or to deliberately use a physical device, pass
+`--serial SERIAL` before the command. Without it, only a single ready emulator
+is selected. Installation preserves app data and fails on a signing mismatch;
+the script does not uninstall existing apps. The package ID is read from the
+built APK metadata.
+
+```bash
+scripts/android-dev.py test
+scripts/android-dev.py seek 0.8
+scripts/android-dev.py capture
+# Run recording in another terminal while seeking:
+scripts/android-dev.py record --seconds 30 --output captures/forecast.mp4
+```
+
+`test` runs Android regression tests with local image fixtures: a forecast
+arriving after selection, seeking across forecast generations, and pausing
+playback on manual selection. These tests do not require weather or map servers.
+`seek` uses the visible timeline's accessibility bounds; loading and permission
+dialogs must be finished first. By default it waits one second for decoding and
+rendering; use `--settle-seconds 3` for a slower emulator. `capture` saves a PNG, UI hierarchy and recent
+logcat under the ignored `captures/` directory. Screenshots and logs may contain
+the device's location or other displayed data; inspect them before sharing.
+
+For a visual check, seek to several positions in the forecast section (roughly
+0.61–1.0), including rapid changes and a change during a background refresh.
+Compare both the displayed time and the rain overlay; a changed time alone
+does not demonstrate a successful frame change. Weather frames can legitimately
+look similar. If an individual frame is missing, the renderer uses a cached
+neighbour, as before. When the selected frame arrives, it replaces that fallback
+automatically. There is no missing-frame message on the map or timeline.
+During a background refresh, the previous forecast generation stays available
+until all 24 replacement forecast frames have loaded successfully.
+
+### Datenquelle im Ladefenster
+
+Das Ladefenster zeigt die tatsächlich verwendeten Downloadwege an:
+
+- **Vom Server:** Bilder werden vom konfigurierten Proxy geladen.
+- **Direkt von DWD · Aufbereitung auf dem Gerät:** Die App lädt die DWD-Bilder
+  direkt und bereitet sie lokal für die Darstellung auf.
+- **Bilder aus lokalem Cache:** Diese Bilder waren bereits auf dem Gerät vorhanden.
+
+Bei einem Serverausfall können Server- und DWD-Downloads kurz gleichzeitig laufen;
+dann werden beide Quellen angezeigt. Fehlgeschlagene Downloads zählen nicht als
+„geladen“. Die Downloadrunde endet spätestens nach 90 Sekunden; fehlende Bilder
+werden beim nächsten Hintergrundversuch erneut angefragt. Ein noch brauchbarer
+Vorhersagesatz bleibt während des Nachladens erhalten.
+
+Die Proxy-Adresse wird beim **Build** festgelegt, nicht beim Start der App:
+
+```properties
+# local.properties (nicht einchecken): echte HTTPS-Adresse einsetzen
+proxy.url=https://DEIN-SERVER/radar
+```
+
+Ohne `proxy.url` lädt die App direkt von DWD. Es wird nicht mehr stillschweigend
+`http://10.0.2.2:8080/radar` verwendet. `10.0.2.2` bezeichnet den Rechner aus Sicht
+des Android-Emulators und ist keine öffentliche Serveradresse fürs Handy.
+Danach `scripts/android-dev.py run` ausführen, damit die Änderung im APK ankommt.
+Alternativ lässt sich die Adresse für einen einzelnen Build überschreiben:
+
+```bash
+./gradlew :app:assembleDebug -PradarProxyUrl=https://DEIN-SERVER/radar
+scripts/android-dev.py run --no-build
+```
+
+Live-Prüfungen benötigen außerdem Netzwerkzugriff für die Kartenkacheln.
+
+### Download-Absicherung
+
+Direkte DWD-Downloads haben ein gemeinsames Limit von fünf gleichzeitigen
+Anfragen, auch beim Fallback und bei Widget-Downloads. Ein fehlgeschlagener Proxy
+wird für 30 Sekunden übersprungen; jeder einzelne HTTP-Download hat eine
+Gesamtfrist von 20 Sekunden einschließlich des Antwortinhalts. Coroutine-Abbruch
+schließt die zugehörige HTTP-Anfrage, und Wiederholungen warten ohne blockierende
+`Thread.sleep`-Aufrufe.
+
+Der Server liest ebenfalls den kompletten Antwortinhalt unter dieser Frist,
+bevor ImageIO das Bild verarbeitet. Doppelte Vorladerunden werden übersprungen;
+Anfragen für denselben Cache-Eintrag teilen sich das Ergebnis, und fertige
+Dateien werden atomar veröffentlicht. Ein Serverupdate ist separat vom APK
+zu bauen und auszurollen.
+
+```bash
+./gradlew :app:testDebugUnitTest :server:test
+scripts/android-dev.py test
+```
+
+Die Tests decken unter anderem einen nach den HTTP-Headern stockenden Download,
+Abbruch der Verbindung, begrenzten DWD-Fallback, gemischte Quellenanzeigen und
+das Beibehalten der alten Vorhersage bei einem unvollständigen Ersatz ab.
+
 ---
 
 ## Building the APK (Build APK)
@@ -91,6 +270,10 @@ cd server
 ```
 
 ### Connecting the App to the Server
+
+Der produktive Radar-Endpunkt ist `https://openrain.getbankless.de/radar`.
+Ergebnisse des Upgrades und Lasttests sowie Rollback-Anweisungen stehen im
+[Lasttestbericht vom 15.09.2026](server/LOAD-TEST-2026-09-15.md).
 
 1. Open the file `local.properties` at the root of the project.
 2. Add or modify the `proxy.url` property with the IP address or domain of your server:
