@@ -16,7 +16,6 @@ import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.io.File
-import java.time.Duration
 import java.time.Instant
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
@@ -84,7 +83,9 @@ fun Application.module() {
             } catch (e: Exception) {
                 logger.error("Error in background pre-caching loop: ${e.message}", e)
             }
-            delay(60000) // check every minute
+            // The next generation can be prewarmed only about 90 seconds before
+            // the switch, so a minute-long pause could miss most of that window.
+            delay(20_000)
         }
     }
 
@@ -139,8 +140,9 @@ fun Application.module() {
                     "frame_${time}_${width}x$height"
                 }
 
-            // Fix 1: if a new base is detected, trigger pre-caching immediately in the background
-            if (baseInstant != null && baseInstant != lastCachedBaseTime) {
+            // A client ahead of the server (a missed prewarm, clock skew) starts
+            // loading right away instead of waiting for the background loop.
+            if (baseInstant != null && completedBases.none { it >= baseInstant }) {
                 launch(Dispatchers.IO) { preCacheRadarFrames() }
             }
 
@@ -290,96 +292,27 @@ private fun compressToWebP(image: BufferedImage): ByteArray {
     return outputStream.toByteArray()
 }
 
-private const val PAST_FRAME_COUNT = 36
-private const val TOTAL_FRAME_COUNT = 60
-private const val FRAME_INTERVAL_SECONDS = 300L // 5 minutes
-private const val SAFETY_OFFSET_SECONDS = 600L // 10 minutes
+// Generations whose 60 frames are all cached: at most the current and the next one.
+private val completedBases: MutableSet<Instant> = ConcurrentHashMap.newKeySet()
 
-private fun getRoundedBaseTime(): Instant {
-    val now = Instant.now()
-    val epochSec = now.epochSecond
-    val roundedSec = ((epochSec - SAFETY_OFFSET_SECONDS) / FRAME_INTERVAL_SECONDS) * FRAME_INTERVAL_SECONDS
-    return Instant.ofEpochSecond(roundedSec)
-}
-
-private fun generateCombinedFrameTimes(base: Instant): List<Instant> {
-    val list = ArrayList<Instant>(TOTAL_FRAME_COUNT)
-    for (i in 0 until TOTAL_FRAME_COUNT) {
-        val instant =
-            if (i < PAST_FRAME_COUNT) {
-                base.minusSeconds((PAST_FRAME_COUNT - i) * FRAME_INTERVAL_SECONDS)
-            } else {
-                base.plusSeconds((i - PAST_FRAME_COUNT) * FRAME_INTERVAL_SECONDS)
-            }
-        list.add(instant)
+private suspend fun dwdPublication(): DwdPublication? =
+    try {
+        DwdCapabilities.parse(String(upstream.read(DwdCapabilities.URL)))
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (e: Exception) {
+        logger.warn("Could not read DWD capabilities: ${e.message}")
+        null
     }
-    return list
-}
-
-private fun cleanOldDiskCache(
-    oldestAllowed: Instant,
-    activeTimes: List<Instant>,
-    currentBase: Instant,
-) {
-    if (!cacheDir.exists() || !cacheDir.isDirectory) return
-    val files = cacheDir.listFiles() ?: return
-
-    val activeTimesSet = activeTimes.map { it.toString() }.toSet()
-    val currentBaseStr = currentBase.toString()
-
-    for (file in files) {
-        val name = file.name
-        if (!name.startsWith("frame_") || !name.endsWith(".webp")) {
-            continue
-        }
-
-        try {
-            if (name.contains("_base_")) {
-                val firstBaseIndex = name.indexOf("_base_")
-                if (firstBaseIndex != -1) {
-                    val timeStr = name.substring(6, firstBaseIndex)
-                    val baseStr = name.substring(firstBaseIndex + 6, name.length - 15) // removes "_1920x2084.webp"
-
-                    if (!activeTimesSet.contains(timeStr)) {
-                        file.delete()
-                    } else {
-                        val fileTime = Instant.parse(timeStr)
-                        if (fileTime.isBefore(currentBase)) {
-                            file.delete()
-                        } else if (baseStr != currentBaseStr) {
-                            file.delete()
-                        }
-                    }
-                } else {
-                    file.delete()
-                }
-            } else {
-                val timeStr = name.substring(6, name.length - 15) // removes "_1920x2084.webp"
-                if (!activeTimesSet.contains(timeStr)) {
-                    file.delete()
-                } else {
-                    val fileTime = Instant.parse(timeStr)
-                    if (fileTime.isBefore(oldestAllowed)) {
-                        file.delete()
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            file.delete()
-        }
-    }
-}
-
-@Volatile private var lastCachedBaseTime: Instant? = null
 
 private suspend fun preCacheRadarFrames() = preloadGate.run {
-    val base = getRoundedBaseTime()
-    if (base == lastCachedBaseTime) return@run
+    val now = Instant.now()
+    val base = GenerationSchedule.nextTarget(now, completedBases) { dwdPublication() } ?: return@run
+    val current = GenerationSchedule.currentBase(now)
+    val generation = if (base == current) "current" else "next"
 
-    logger.info("New base time detected: $base. Pre-caching all 60 frames...")
-    val times = generateCombinedFrameTimes(base)
-
-    val oldestAllowed = base.minus(Duration.ofHours(6))
+    logger.info("Pre-caching all 60 frames of the $generation generation $base...")
+    val times = GenerationSchedule.frameTimes(base)
     val failed = fetchFrameBatch(times, base)
 
     if (failed.isNotEmpty()) {
@@ -392,16 +325,14 @@ private suspend fun preCacheRadarFrames() = preloadGate.run {
     }
 
     if (times.all { time ->
-            val key = if (time >= base) "frame_${time}_base_${base}_1920x2084" else "frame_${time}_1920x2084"
+            val key = GenerationSchedule.frameKey(time, base)
             memoryCache.containsKey(key) || File(cacheDir, "$key.webp").isFile
         }) {
-        lastCachedBaseTime = base
-        cleanOldDiskCache(oldestAllowed, times, base)
-        val activeKeys = times.map { time ->
-            if (time >= base) "frame_${time}_base_${base}_1920x2084" else "frame_${time}_1920x2084"
-        }.toSet()
-        memoryCache.keys.retainAll(activeKeys)
-        logger.info("Pre-caching completed for base time: $base")
+        completedBases.add(base)
+        completedBases.removeIf { it < current }
+        // Clients keep requesting the current generation until the switch.
+        val removed = RadarDiskCache.retain(cacheDir, memoryCache.keys, setOf(current, base))
+        logger.info("Pre-caching completed for the $generation generation $base; removed $removed stale files")
     } else {
         logger.warn("Pre-caching incomplete for base time: $base; retaining previous cache and retrying next cycle")
     }
@@ -418,7 +349,7 @@ private suspend fun fetchFrameBatch(
                 val timeStr = timeInstant.toString()
                 val baseStr = base.toString()
                 val isForecast = timeInstant >= base
-                val key = if (isForecast) "frame_${timeStr}_base_${baseStr}_1920x2084" else "frame_${timeStr}_1920x2084"
+                val key = GenerationSchedule.frameKey(timeInstant, base)
                 if (cachedRadar(key, timeStr, if (isForecast) baseStr else "0", 1920, 2084) == null) {
                     failed.add(timeInstant)
                 }
