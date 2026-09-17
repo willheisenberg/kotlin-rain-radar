@@ -5,17 +5,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.rainradar.data.DwdWmsClient
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Instant
 
 class RadarViewModel(
@@ -73,91 +73,73 @@ class RadarViewModel(
         val previousJob = preloadJob
         previousJob?.cancel()
         if (!silent || force) stopPlayback()
-        preloadJob =
-            viewModelScope.launch {
-                previousJob?.join()
-                _loadStatus.value = RadarLoadStatus()
-                _preloadProgress.value = 0f
-                val oldTimes = _frameTimes.value
-                val oldBase = oldTimes.getOrNull(DwdWmsClient.PAST_FRAME_COUNT)
-                val oldReady =
-                    withContext(Dispatchers.IO) {
-                        oldTimes.count { DwdWmsClient.isFrameReady(activeContext, it, oldBase ?: base) }
-                    }
-                val oldForecastReady =
-                    withContext(Dispatchers.IO) {
-                        oldTimes.drop(DwdWmsClient.PAST_FRAME_COUNT).any {
-                            DwdWmsClient.isFrameReady(activeContext, it, oldBase ?: base)
-                        }
-                    }
-                val keepPreviousGeneration = !force && oldBase != base && oldForecastReady
-                _isPreloading.value = !silent || force || oldReady == 0
-                if (_isPreloading.value) stopPlayback()
-
-                if (!keepPreviousGeneration) publishTimes(times, force)
-                // Do not delete the displayed generation before its replacement is
-                // ready. Forecast filenames include the base, so they cannot be
-                // mistaken for observations or for a newer forecast generation.
-                val permits = Semaphore(8)
-                val ready =
-                    java.util.concurrent.ConcurrentHashMap
-                        .newKeySet<Instant>()
-                withTimeoutOrNull(90_000) {
-                    // Load the current frame and forecasts before missing history.
-                    val priorityTimes =
-                        times.drop(DwdWmsClient.PAST_FRAME_COUNT) +
-                            times.take(DwdWmsClient.PAST_FRAME_COUNT).asReversed()
-                    priorityTimes.forEach { time ->
-                        launch {
-                            permits.withPermit {
-                                var source: com.example.rainradar.data.FrameSource? = null
-                                val success =
-                                    download(activeContext, time, base, force) { next ->
-                                        _loadStatus.update { it.active(source, -1).active(next, 1) }
-                                        source = next
-                                    }
-                                if (success) {
-                                    ready.add(time)
-                                    _frameRevision.update { it + 1 }
-                                    // The current frame is all the map needs to be
-                                    // usable. Everything else fills in behind it,
-                                    // so a cold start shows radar after one frame
-                                    // instead of after the whole generation.
-                                    if (time == base) _isPreloading.value = false
-                                }
-                                _loadStatus.update { it.finished(source, success) }
-                                _preloadProgress.value = ready.size.toFloat() / times.size
-                            }
-                        }
-                    }
-                }
-                _loadStatus.update { it.copy(serverActive = 0, dwdActive = 0) }
-                val forecastsReady = times.drop(DwdWmsClient.PAST_FRAME_COUNT).all { it in ready }
-                if (!keepPreviousGeneration || forecastsReady) {
-                    publishTimes(times, force)
-                    _frameRevision.update { it + 1 }
-                    withContext(Dispatchers.IO) {
-                        DwdWmsClient.cleanOldCache(activeContext, base, times.first(), times)
-                    }
-                }
-                // If a replacement failed, keep the working old generation and
-                // let the next poll retry missing files in the new generation.
-                _isPreloading.value = false
+        preloadJob = viewModelScope.launch {
+            previousJob?.join()
+            _loadStatus.value = RadarLoadStatus()
+            _preloadProgress.value = 0f
+            val oldTimes = _frameTimes.value
+            val oldBase = oldTimes.getOrNull(DwdWmsClient.PAST_FRAME_COUNT)
+            val oldReady = withContext(Dispatchers.IO) {
+                oldTimes.count { DwdWmsClient.isFrameReady(activeContext, it, oldBase ?: base) }
             }
+            val oldForecastReady = withContext(Dispatchers.IO) {
+                oldTimes.drop(DwdWmsClient.PAST_FRAME_COUNT).any {
+                    DwdWmsClient.isFrameReady(activeContext, it, oldBase ?: base)
+                }
+            }
+            val keepPreviousGeneration = !force && oldBase != base && oldForecastReady
+            _isPreloading.value = !silent || force || oldReady == 0
+            if (_isPreloading.value) stopPlayback()
+
+            if (!keepPreviousGeneration) publishTimes(times, force)
+            // Do not delete the displayed generation before its replacement is
+            // ready. Forecast filenames include the base, so they cannot be
+            // mistaken for observations or for a newer forecast generation.
+            val permits = Semaphore(8)
+            val ready = java.util.concurrent.ConcurrentHashMap.newKeySet<Instant>()
+            withTimeoutOrNull(90_000) {
+                // Load the current frame and forecasts before missing history.
+                val priorityTimes = times.drop(DwdWmsClient.PAST_FRAME_COUNT) +
+                    times.take(DwdWmsClient.PAST_FRAME_COUNT).asReversed()
+                priorityTimes.forEach { time ->
+                    launch {
+                        permits.withPermit {
+                            var source: com.example.rainradar.data.FrameSource? = null
+                            val success = download(activeContext, time, base, force) { next ->
+                                _loadStatus.update { it.active(source, -1).active(next, 1) }
+                                source = next
+                            }
+                            if (success) {
+                                ready.add(time)
+                                _frameRevision.update { it + 1 }
+                            }
+                            _loadStatus.update { it.finished(source, success) }
+                            _preloadProgress.value = ready.size.toFloat() / times.size
+                        }
+                    }
+                }
+            }
+            _loadStatus.update { it.copy(serverActive = 0, dwdActive = 0) }
+            val forecastsReady = times.drop(DwdWmsClient.PAST_FRAME_COUNT).all { it in ready }
+            if (!keepPreviousGeneration || forecastsReady) {
+                publishTimes(times, force)
+                _frameRevision.update { it + 1 }
+                withContext(Dispatchers.IO) {
+                    DwdWmsClient.cleanOldCache(activeContext, base, times.first(), times)
+                }
+            }
+            // If a replacement failed, keep the working old generation and
+            // let the next poll retry missing files in the new generation.
+            _isPreloading.value = false
+        }
     }
 
-    private fun publishTimes(
-        times: List<Instant>,
-        reset: Boolean,
-    ) {
+    private fun publishTimes(times: List<Instant>, reset: Boolean) {
         val selected = _frameTimes.value.getOrNull(_activeFrameIndex.value)
         _frameTimes.value = times
-        _activeFrameIndex.value =
-            if (reset) {
-                DwdWmsClient.PAST_FRAME_COUNT
-            } else {
-                times.indexOf(selected).takeIf { it >= 0 } ?: DwdWmsClient.PAST_FRAME_COUNT
-            }
+        _activeFrameIndex.value = if (reset) DwdWmsClient.PAST_FRAME_COUNT else {
+            times.indexOf(selected).takeIf { it >= 0 } ?: DwdWmsClient.PAST_FRAME_COUNT
+        }
     }
 
     fun setActiveFrameIndex(index: Int) {
